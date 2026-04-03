@@ -1,0 +1,122 @@
+VERONICA ARCHITECTURE
+=====================
+
+                          ┌─────────────────────────┐
+                          │      MAC HOST            │
+                          │                          │
+                          │  LM Studio :1234         │
+                          │  Qwen 3.5-35B            │
+                          │  (parallel inference)    │
+                          │                          │
+                          │  Bubble Tea TUI          │
+                          │  (observer)              │
+                          │                          │
+                          │  Lume :7777              │
+                          │  (VM lifecycle)          │
+                          └────────┬──▲──────────────┘
+                                   │  │
+                          LLM calls│  │activity stream
+                          (HTTP)   │  │(WebSocket)
+                                   │  │
+  ┌────────────────────────────────┼──┼──────────────────────────────┐
+  │  LUME VM · Fedora 43 · Kernel 6.17                              │
+  │                                │  │                              │
+  │  ┌─────────────────────────────┼──┼───────────────────────────┐  │
+  │  │  VERONICA DAEMON (single Go binary, root)                  │  │
+  │  │                             │  │                            │  │
+  │  │  ┌──────────────────────────┴──┴────────────────────────┐  │  │
+  │  │  │  COORDINATOR (single goroutine, action queue)        │  │  │
+  │  │  │                                                      │  │  │
+  │  │  │  - triages incoming eBPF events                      │  │  │
+  │  │  │  - spawns child agents                               │  │  │
+  │  │  │  - serializes all write/execute actions               │  │  │
+  │  │  │  - resolves conflicts between agents                 │  │  │
+  │  │  │  - reports to TUI                                    │  │  │
+  │  │  └──────┬───────────────────────────────────▲───────────┘  │  │
+  │  │         │ tasks                             │ action       │  │
+  │  │         ▼                                   │ requests     │  │
+  │  │  ┌──────────────────────────────────────────┴───────────┐  │  │
+  │  │  │  CHILD AGENTS (goroutines, spawned per task)         │  │  │
+  │  │  │                                                      │  │  │
+  │  │  │  Each agent:                                         │  │  │
+  │  │  │  - calls Qwen directly for reasoning (parallel)      │  │  │
+  │  │  │  - executes read-only ops locally (read /proc, etc)  │  │  │
+  │  │  │  - sends write/execute ops to coordinator queue      │  │  │
+  │  │  │  - exits when task is done                           │  │  │
+  │  │  └──────────────────────────────────────────────────────┘  │  │
+  │  │                                                            │  │
+  │  │  ┌──────────────────────────────────────────────────────┐  │  │
+  │  │  │  eBPF MANAGER                                        │  │  │
+  │  │  │                                                      │  │  │
+  │  │  │  - loads eBPF C programs via cilium/ebpf             │  │  │
+  │  │  │  - reads events from ring buffers                    │  │  │
+  │  │  │  - writes policy to eBPF maps                        │  │  │
+  │  │  │  - attaches/detaches probes                          │  │  │
+  │  │  └──────┬───────────────────────────────────▲───────────┘  │  │
+  │  └─────────┼───────────────────────────────────┼──────────────┘  │
+  │            │ attach probes                     │ update maps     │
+  │            │ ring buffer events                │ (policy)        │
+  │            ▼                                   │                 │
+  │  ┌─────────────────────────────────────────────┴───────────────┐ │
+  │  │  LINUX KERNEL 6.17                                          │ │
+  │  │                                                             │ │
+  │  │  eBPF hooks:                                                │ │
+  │  │  - kprobes/tracepoints  (observe any syscall/function)      │ │
+  │  │  - XDP/TC               (inspect/rewrite/drop packets)      │ │
+  │  │  - LSM                  (block/allow security operations)   │ │
+  │  │  - sched_ext            (custom CPU scheduling)             │ │
+  │  │  - uprobes              (observe userspace functions)       │ │
+  │  │  - perf_event           (CPU counters, profiling)           │ │
+  │  │                                                             │ │
+  │  │  eBPF maps:  policy tables shared between kernel & daemon   │ │
+  │  │  Ring buffer: events flowing kernel → daemon                │ │
+  │  └─────────────────────────────────────────────────────────────┘ │
+  └──────────────────────────────────────────────────────────────────┘
+
+
+EVENT FLOW
+==========
+
+  kernel syscall fires
+       │
+       ▼
+  eBPF probe captures it ──→ checks eBPF map for existing policy
+       │                            │
+       │ (no policy)                │ (policy exists)
+       ▼                            ▼
+  ring buffer ──→ daemon        enforce immediately
+       │                        (allow/deny/rewrite)
+       ▼
+  coordinator triages
+       │
+       ▼
+  spawns child agent goroutine
+       │
+       ├──→ agent calls Qwen: "what should we do?"
+       │         │
+       │         ▼
+       │    Qwen returns tool_calls
+       │         │
+       │         ├── read-only?  ──→ execute locally, loop
+       │         │
+       │         └── write/exec? ──→ send to coordinator queue
+       │                                    │
+       │                              coordinator checks conflicts
+       │                                    │
+       │                              approved ──→ execute
+       │                              rejected ──→ try alternative
+       │
+       └──→ task done, goroutine exits
+            coordinator updates eBPF map with new policy
+            next time this event fires, kernel enforces directly
+
+
+eBPF CAPABILITIES (all used)
+=============================
+
+  OBSERVE     kprobes, tracepoints, uprobes, fentry/fexit, perf_event
+  ENFORCE     LSM hooks, seccomp, XDP drop
+  TRANSFORM   XDP/TC packet rewrite, socket redirect, DNS rewrite, transparent proxy
+  SCHEDULE    sched_ext custom CPU scheduling, per-process priority
+  MEASURE     perf counters, in-kernel histograms, per-process metrics
+  ITERATE     walk TCP connections, enumerate processes, dump kernel structs
