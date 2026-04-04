@@ -13,7 +13,8 @@ const rateLimitWindow = 5 * time.Second
 
 // noiseComms is the set of comm names that should never spawn agents.
 var noiseComms = map[string]bool{
-	"veronica":   true, // self
+	"veronicad":  true, // self (daemon)
+	"veronica":   true, // self (legacy)
 	"ls":         true,
 	"cat":        true,
 	"head":       true,

@@ -13,8 +13,8 @@ import (
 const (
 	vmName      = "veronica"
 	serviceName = "veronica"
-	daemonBin   = "/usr/local/bin/veronica"
-	daemonPkg   = "./cmd/veronica/"
+	daemonBin   = "/usr/local/bin/veronicad"
+	daemonPkg   = "./cmd/veronicad/"
 )
 
 func init() {
@@ -173,7 +173,7 @@ var buildCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Building daemon inside VM...")
 		if err := vmShell("bash", "-c",
-			fmt.Sprintf("cd ~/veronica && GOTOOLCHAIN=auto sudo -E go build -o %s %s", daemonBin, daemonPkg),
+			fmt.Sprintf("cd /Users/*/dev/veronica && GOTOOLCHAIN=auto sudo -E go build -o %s %s", daemonBin, daemonPkg),
 		); err != nil {
 			return fmt.Errorf("build failed: %w", err)
 		}

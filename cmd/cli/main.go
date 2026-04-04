@@ -8,9 +8,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "veronicactl",
+	Use:   "veronica",
 	Short: "Control the Veronica daemon running inside the Lima VM",
-	Long: `veronicactl manages the Veronica daemon that runs inside a Lima VM.
+	Long: `veronica manages the Veronica daemon that runs inside a Lima VM.
 
 The Lima VM must be created before use:
   limactl create --name=veronica lima/veronica.yaml`,
