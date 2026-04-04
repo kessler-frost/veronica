@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/cilium/ebpf v0.21.0
+	github.com/coder/websocket v1.8.14
 	github.com/spf13/cobra v1.10.2
 	github.com/tidwall/buntdb v1.3.2
 )
