@@ -1,5 +1,13 @@
 package llm
 
+import "github.com/fimbulwinter/veronica/internal/tool"
+
+// ToolDef is an alias for tool.ToolDef so callers can use either package.
+type ToolDef = tool.ToolDef
+
+// FunctionDef is an alias for tool.FunctionDef so callers can use either package.
+type FunctionDef = tool.FunctionDef
+
 // Message is a single message in a chat conversation.
 type Message struct {
 	Role       string     `json:"role"`
@@ -19,19 +27,6 @@ type ToolCall struct {
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
-}
-
-// ToolDef defines a tool the LLM can call.
-type ToolDef struct {
-	Type     string      `json:"type"`
-	Function FunctionDef `json:"function"`
-}
-
-// FunctionDef is the tool's name, description, and parameter schema.
-type FunctionDef struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
 }
 
 // Request is a chat completion request.

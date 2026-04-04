@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/fimbulwinter/veronica/internal/llm"
 )
 
 // entry holds a tool's definition and its untyped executor.
 type entry struct {
-	def     llm.ToolDef
+	def     ToolDef
 	execute func(ctx context.Context, rawArgs string) (any, error)
 }
 
@@ -32,9 +30,9 @@ func Register[TArgs any](r *Registry, name string, description string, fn func(c
 	schema := SchemaFromStruct[TArgs]()
 
 	r.tools[name] = entry{
-		def: llm.ToolDef{
+		def: ToolDef{
 			Type: "function",
-			Function: llm.FunctionDef{
+			Function: FunctionDef{
 				Name:        name,
 				Description: description,
 				Parameters:  schema,
@@ -52,8 +50,8 @@ func Register[TArgs any](r *Registry, name string, description string, fn func(c
 }
 
 // Definitions returns all registered tool definitions in registration order.
-func (r *Registry) Definitions() []llm.ToolDef {
-	defs := make([]llm.ToolDef, len(r.order))
+func (r *Registry) Definitions() []ToolDef {
+	defs := make([]ToolDef, len(r.order))
 	for i, name := range r.order {
 		defs[i] = r.tools[name].def
 	}
