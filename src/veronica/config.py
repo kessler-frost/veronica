@@ -13,3 +13,6 @@ class VeronicaConfig(BaseSettings):
     daemon_pkg: str = "./cmd/veronicad/"
     daemon_install_path: str = "/usr/local/bin/veronicad"
     project_path: str = "/Users/fimbulwinter/dev/veronica"
+    llm_base_url: str = "http://localhost:1234"
+    llm_model: str = ""
+    llm_max_turns: int = 10
