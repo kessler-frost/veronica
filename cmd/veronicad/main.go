@@ -12,6 +12,7 @@ import (
 
 	"github.com/fimbulwinter/veronica/internal/coordinator"
 	vebpf "github.com/fimbulwinter/veronica/internal/ebpf"
+	"github.com/fimbulwinter/veronica/internal/event"
 	"github.com/fimbulwinter/veronica/internal/state"
 	"github.com/fimbulwinter/veronica/internal/tool"
 	"github.com/fimbulwinter/veronica/internal/ws"
@@ -98,10 +99,15 @@ func main() {
 	}()
 
 	// Start eBPF
-	events := make(chan coordinator.Event, 256)
+	events := make(chan event.Event, 256)
 	go func() {
 		for e := range events {
-			coord.HandleEvent(e)
+			coord.HandleEvent(coordinator.Event{
+				Type:      e.Type,
+				Resource:  e.Resource,
+				Data:      e.Data,
+				Timestamp: e.Timestamp,
+			})
 		}
 	}()
 

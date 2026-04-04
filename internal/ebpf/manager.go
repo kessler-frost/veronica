@@ -14,19 +14,19 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 
-	"github.com/fimbulwinter/veronica/internal/coordinator"
 	"github.com/fimbulwinter/veronica/internal/ebpf/bpf"
+	"github.com/fimbulwinter/veronica/internal/event"
 )
 
 // Manager loads eBPF programs, attaches hooks, and reads events.
 type Manager struct {
 	links   []link.Link
 	readers []*ringbuf.Reader
-	events  chan<- coordinator.Event
+	events  chan<- event.Event
 }
 
 // New creates an eBPF manager that sends events to the given channel.
-func New(events chan<- coordinator.Event) *Manager {
+func New(events chan<- event.Event) *Manager {
 	return &Manager{events: events}
 }
 
@@ -125,7 +125,7 @@ func (m *Manager) ReadEvents(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (m *Manager) parseEvent(data []byte) *coordinator.Event {
+func (m *Manager) parseEvent(data []byte) *event.Event {
 	if len(data) < 4 {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 			args = readCmdline(e.Header.PID)
 		}
 		cwd := readCwd(e.Header.PID)
-		return &coordinator.Event{
+		return &event.Event{
 			Type:     "process_exec",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
 			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q,"cwd":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, args, cwd),
@@ -156,7 +156,7 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
-		return &coordinator.Event{
+		return &event.Event{
 			Type:     "process_exit",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
 			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"uid":%d,"exit_code":%d}`, e.Header.CommString(), e.Header.PID, e.Header.UID, e.ExitCode),
@@ -167,7 +167,7 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
-		return &coordinator.Event{
+		return &event.Event{
 			Type:     "file_open",
 			Resource: fmt.Sprintf("file:%s", FilenameString(e.Filename)),
 			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"filename":%q,"flags":%d}`, e.Header.CommString(), e.Header.PID, FilenameString(e.Filename), e.Flags),
@@ -179,7 +179,7 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 			return nil
 		}
 		ip := fmt.Sprintf("%d.%d.%d.%d", byte(e.DAddr), byte(e.DAddr>>8), byte(e.DAddr>>16), byte(e.DAddr>>24))
-		return &coordinator.Event{
+		return &event.Event{
 			Type:     "net_connect",
 			Resource: fmt.Sprintf("ip:%s:%d", ip, e.DPort),
 			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"daddr":%q,"dport":%d}`, e.Header.CommString(), e.Header.PID, ip, e.DPort),
