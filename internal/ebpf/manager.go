@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -19,9 +20,9 @@ import (
 
 // Manager loads eBPF programs, attaches hooks, and reads events.
 type Manager struct {
-	links  []link.Link
-	reader *ringbuf.Reader
-	events chan<- coordinator.Event
+	links   []link.Link
+	readers []*ringbuf.Reader
+	events  chan<- coordinator.Event
 }
 
 // New creates an eBPF manager that sends events to the given channel.
@@ -43,11 +44,11 @@ func (m *Manager) LoadAndAttach() error {
 	}
 	m.links = append(m.links, procLink)
 
-	reader, err := ringbuf.NewReader(procObjs.Events)
+	procReader, err := ringbuf.NewReader(procObjs.Events)
 	if err != nil {
-		return fmt.Errorf("create ring buffer reader: %w", err)
+		return fmt.Errorf("create process_exec ring buffer reader: %w", err)
 	}
-	m.reader = reader
+	m.readers = append(m.readers, procReader)
 
 	// File open kprobe (non-fatal if unavailable)
 	fileObjs := bpf.FileOpenObjects{}
@@ -59,6 +60,9 @@ func (m *Manager) LoadAndAttach() error {
 			log.Printf("WARN: attach file_open: %v", err)
 		} else {
 			m.links = append(m.links, fileLink)
+			if fileReader, err := ringbuf.NewReader(fileObjs.Events); err == nil {
+				m.readers = append(m.readers, fileReader)
+			}
 		}
 	}
 
@@ -72,6 +76,9 @@ func (m *Manager) LoadAndAttach() error {
 			log.Printf("WARN: attach net_connect: %v", err)
 		} else {
 			m.links = append(m.links, netLink)
+			if netReader, err := ringbuf.NewReader(netObjs.Events); err == nil {
+				m.readers = append(m.readers, netReader)
+			}
 		}
 	}
 
@@ -85,36 +92,48 @@ func (m *Manager) LoadAndAttach() error {
 			log.Printf("WARN: attach process_exit: %v", err)
 		} else {
 			m.links = append(m.links, exitLink)
+			if exitReader, err := ringbuf.NewReader(exitObjs.Events); err == nil {
+				m.readers = append(m.readers, exitReader)
+			}
 		}
 	}
 
 	return nil
 }
 
-// ReadEvents reads events from the ring buffer and sends them to the coordinator.
-// Blocks until context is cancelled or ring buffer is closed.
+// ReadEvents reads events from all ring buffers concurrently.
+// Blocks until context is cancelled.
 func (m *Manager) ReadEvents(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+	var wg sync.WaitGroup
+	for _, reader := range m.readers {
+		wg.Add(1)
+		go func(r *ringbuf.Reader) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 
-		record, err := m.reader.Read()
-		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
-				return nil
+				record, err := r.Read()
+				if err != nil {
+					if errors.Is(err, ringbuf.ErrClosed) {
+						return
+					}
+					log.Printf("ring buffer read: %v", err)
+					continue
+				}
+
+				event := m.parseEvent(record.RawSample)
+				if event != nil {
+					m.events <- *event
+				}
 			}
-			log.Printf("ring buffer read: %v", err)
-			continue
-		}
-
-		event := m.parseEvent(record.RawSample)
-		if event != nil {
-			m.events <- *event
-		}
+		}(reader)
 	}
+	wg.Wait()
+	return ctx.Err()
 }
 
 func (m *Manager) parseEvent(data []byte) *coordinator.Event {
@@ -181,10 +200,10 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 	return nil
 }
 
-// Close detaches all hooks and closes the ring buffer reader.
+// Close detaches all hooks and closes all ring buffer readers.
 func (m *Manager) Close() error {
-	if m.reader != nil {
-		m.reader.Close()
+	for _, r := range m.readers {
+		_ = r.Close()
 	}
 	for _, l := range m.links {
 		l.Close()

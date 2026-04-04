@@ -124,8 +124,65 @@ func (c *Classifier) Classify(event Event) EventCategory {
 		}
 	}
 
+	// file_open: silence library/locale/cache loads — only interesting for config/sensitive files
+	if event.Type == "file_open" {
+		filename := filenameFromData(event.Data)
+		if isBoringFileOpen(filename) {
+			return CategorySilent
+		}
+	}
+
+	// process_exit: silence exits with code 0 from non-interesting processes
+	if event.Type == "process_exit" {
+		exitCode := exitCodeFromData(event.Data)
+		if exitCode == 0 {
+			return CategorySilent
+		}
+	}
+
 	// Everything else: let the LLM decide
 	return CategoryAgent
+}
+
+func filenameFromData(data string) string {
+	idx := strings.Index(data, `"filename":"`)
+	if idx == -1 {
+		return ""
+	}
+	start := idx + len(`"filename":"`)
+	end := strings.Index(data[start:], `"`)
+	if end == -1 {
+		return ""
+	}
+	return data[start : start+end]
+}
+
+func exitCodeFromData(data string) int {
+	var payload struct {
+		ExitCode int `json:"exit_code"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return 0
+	}
+	return payload.ExitCode
+}
+
+// isBoringFileOpen returns true for file opens that are routine OS activity.
+func isBoringFileOpen(filename string) bool {
+	boringPrefixes := []string{
+		"/lib/", "/lib64/", "/usr/lib/", "/usr/lib64/",
+		"/usr/share/locale/", "/usr/share/zoneinfo/",
+		"/usr/lib/locale/",
+		"/proc/", "/sys/", "/dev/",
+		"/etc/ld.so", "/etc/nsswitch", "/etc/host",
+		"/etc/resolv", "/etc/gai.conf", "/etc/localtime",
+	}
+	for _, p := range boringPrefixes {
+		if strings.HasPrefix(filename, p) {
+			return true
+		}
+	}
+	return filename == "" || filename == "." || filename == ".."
 }
 
 func pidFromData(data string) uint32 {
