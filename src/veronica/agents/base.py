@@ -169,10 +169,41 @@ class BaseAgent(ABC):
         resource = event.get("resource", "unknown")
         return f"{self.agent_id}.{resource}".replace(":", "-").replace("/", "_")
 
+    def _is_noise(self, event: dict) -> bool:
+        """Pre-filter obvious system noise before it reaches the LLM."""
+        data = event.get("data", {})
+        comm = data.get("comm", "")
+        filename = data.get("filename", "")
+        cmdline = data.get("cmdline", "")
+
+        # System daemons and utilities
+        noise_comms = {
+            "systemd", "chronyd", "chronyc", "nm-dispatcher", "NetworkManager",
+            "dbus-daemon", "polkitd", "locale", "localectl", "hostnamectl",
+            "id", "stat", "uname", "whoami", "hostname", "uptime",
+            "console-login-", "agetty", "login", "sshd",
+        }
+        for nc in noise_comms:
+            if comm.startswith(nc):
+                return True
+
+        # System paths
+        noise_paths = ["/usr/lib/systemd/", "/usr/lib/NetworkManager/", "/etc/NetworkManager/",
+                       "/run/chrony", "/usr/libexec/"]
+        for p in noise_paths:
+            if filename.startswith(p) or cmdline.startswith(p):
+                return True
+
+        return False
+
     async def _on_event(self, msg) -> None:
         """Buffer incoming events and debounce — process as batch after quiet period."""
         event = msgspec.json.decode(msg.data, type=dict)
         event["_subject"] = msg.subject
+
+        # Drop obvious noise before buffering
+        if self._is_noise(event):
+            return
 
         # Skip if we already have an event with the same semantic key in the buffer
         key = self._semantic_key(event)
