@@ -76,7 +76,7 @@ func TestCoordinator_ActionApproved(t *testing.T) {
 						ID: "c1", Type: "function",
 						Function: llm.FunctionCall{
 							Name:      "request_action",
-							Arguments: `{"type":"shell_exec","resource":"pid:42","args":"{\"cmd\":\"echo ok\"}"}`,
+							Arguments: `{"command":"echo ok","reason":"test action"}`,
 						},
 					}},
 				},

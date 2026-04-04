@@ -19,7 +19,7 @@ import (
 type Config struct {
 	SystemPrompt   string
 	MaxTurns       int
-	ActionExecutor func(Action) (string, error) // executes approved actions; nil = auto-approve with "ok"
+	ActionExecutor func(Action) (string, error)
 }
 
 // Coordinator receives events, spawns agent goroutines, and serializes actions.
@@ -33,8 +33,8 @@ type Coordinator struct {
 	events       chan Event
 	actions      chan ActionRequest
 	reports      chan Report
-	inFlight     map[string]string // resource -> agentID currently acting on it
-	executorPIDs sync.Map          // pid (uint32) -> true; PIDs of commands we spawned
+	inFlight     map[string]string
+	executorPIDs sync.Map
 }
 
 // IsOurPID reports whether the given PID belongs to a command we spawned.
@@ -102,37 +102,21 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 		case event := <-c.events:
 			category := c.classifier.Classify(event)
 
-			// Only record non-silent events
-			if category != CategorySilent {
+			switch category {
+			case CategorySilent:
+				// nothing
+			case CategoryAgent:
 				if err := c.store.RecordEvent(state.Event{
-					Type:      event.Type,
-					Resource:  event.Resource,
-					Data:      event.Data,
-					Timestamp: event.Timestamp,
+					Type: event.Type, Resource: event.Resource,
+					Data: event.Data, Timestamp: event.Timestamp,
 				}); err != nil {
 					log.Printf("record event: %v", err)
 				}
-			}
-
-			switch category {
-			case CategorySilent:
-				// nothing to do
-			case CategoryPolicy:
-				// TODO: enforce from eBPF map directly
-			case CategoryImmediate:
 				if c.filter.ShouldProcess(event) {
 					c.filter.AgentStarted()
 					go func() {
 						defer c.filter.AgentFinished()
-						c.spawnAgent(ctx, event, promptForImmediate(event))
-					}()
-				}
-			case CategoryProactive:
-				if c.filter.ShouldProcess(event) {
-					c.filter.AgentStarted()
-					go func() {
-						defer c.filter.AgentFinished()
-						c.spawnAgent(ctx, event, promptForProactive(event))
+						c.spawnAgent(ctx, event)
 					}()
 				}
 			case CategoryDigest:
@@ -164,10 +148,10 @@ func (c *Coordinator) digestLoop(ctx context.Context) {
 	}
 }
 
-func (c *Coordinator) spawnAgent(ctx context.Context, event Event, systemPrompt string) {
+func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 	agentID := agentIDFor(event)
 
-	c.store.SetAgentMeta(agentID, state.AgentMeta{
+	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
 		Task:   fmt.Sprintf("%s on %s", event.Type, event.Resource),
 		Status: "active",
 	})
@@ -183,22 +167,22 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event, systemPrompt 
 	userMsg := fmt.Sprintf("eBPF event: type=%s resource=%s data=%s", event.Type, event.Resource, event.Data)
 
 	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
-		SystemPrompt: systemPrompt,
+		SystemPrompt: agentPrompt,
 		MaxTurns:     c.config.MaxTurns,
 	}, userMsg)
 
 	if err != nil {
 		log.Printf("agent %s error: %v", agentID, err)
-		c.store.AppendAgentLog(agentID, state.LogEntry{
+		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
 			Action: "error", Result: err.Error(),
 		})
 	} else {
-		c.store.AppendAgentLog(agentID, state.LogEntry{
+		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
 			Action: "completed", Result: result.Response,
 		})
 	}
 
-	c.store.SetAgentMeta(agentID, state.AgentMeta{
+	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
 		Task:   fmt.Sprintf("%s on %s", event.Type, event.Resource),
 		Status: "done",
 	})
@@ -207,66 +191,6 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event, systemPrompt 
 		AgentID:   agentID,
 		EventType: "completed",
 	})
-}
-
-func (c *Coordinator) actionLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case req := <-c.actions:
-			c.report(Report{
-				AgentID:   req.AgentID,
-				EventType: "action_requested",
-				Detail:    fmt.Sprintf("%s on %s", req.Action.Type, req.Action.Resource),
-			})
-
-			// Check for conflict
-			if existingAgent, ok := c.inFlight[req.Action.Resource]; ok && existingAgent != req.AgentID {
-				c.report(Report{
-					AgentID:   req.AgentID,
-					EventType: "conflict",
-					Detail:    fmt.Sprintf("resource %s already claimed by %s", req.Action.Resource, existingAgent),
-				})
-				req.Response <- ActionResult{
-					Approved: false,
-					Output:   fmt.Sprintf("resource %s is being handled by %s", req.Action.Resource, existingAgent),
-				}
-				continue
-			}
-
-			c.inFlight[req.Action.Resource] = req.AgentID
-
-			executor := c.config.ActionExecutor
-			if executor == nil {
-				executor = func(a Action) (string, error) { return "ok", nil }
-			}
-
-			output, err := executor(req.Action)
-
-			delete(c.inFlight, req.Action.Resource)
-
-			if err != nil {
-				c.report(Report{
-					AgentID:   req.AgentID,
-					EventType: "action_rejected",
-					Detail:    err.Error(),
-				})
-				req.Response <- ActionResult{Approved: false, Output: err.Error(), Error: err}
-			} else {
-				c.report(Report{
-					AgentID:   req.AgentID,
-					EventType: "action_approved",
-					Detail:    output,
-				})
-				c.store.AppendAgentLog(req.AgentID, state.LogEntry{
-					Action: req.Action.Type,
-					Result: output,
-				})
-				req.Response <- ActionResult{Approved: true, Output: output}
-			}
-		}
-	}
 }
 
 func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
@@ -285,7 +209,6 @@ func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
 
 	toolkit := NewToolkit(c.actions, agentID)
 
-	// Build summary
 	typeCounts := make(map[string]int)
 	for _, e := range events {
 		typeCounts[e.Type]++
@@ -295,7 +218,6 @@ func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
 		summary += fmt.Sprintf("  %s: %d events\n", t, count)
 	}
 	summary += "\nRecent events:\n"
-	// Show last 10 events
 	start := len(events) - 10
 	if start < 0 {
 		start = 0
@@ -305,7 +227,7 @@ func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
 	}
 
 	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
-		SystemPrompt: promptForDigest(),
+		SystemPrompt: digestPrompt,
 		MaxTurns:     c.config.MaxTurns,
 	}, summary)
 
@@ -329,70 +251,85 @@ func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
 	})
 }
 
+func (c *Coordinator) actionLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-c.actions:
+			c.report(Report{
+				AgentID:   req.AgentID,
+				EventType: "action_requested",
+				Detail:    fmt.Sprintf("%s on %s", req.Action.Type, req.Action.Resource),
+			})
+
+			if existingAgent, ok := c.inFlight[req.Action.Resource]; ok && existingAgent != req.AgentID {
+				c.report(Report{
+					AgentID:   req.AgentID,
+					EventType: "conflict",
+					Detail:    fmt.Sprintf("resource %s already claimed by %s", req.Action.Resource, existingAgent),
+				})
+				req.Response <- ActionResult{
+					Approved: false,
+					Output:   fmt.Sprintf("resource %s is being handled by %s", req.Action.Resource, existingAgent),
+				}
+				continue
+			}
+
+			c.inFlight[req.Action.Resource] = req.AgentID
+
+			executor := c.config.ActionExecutor
+			if executor == nil {
+				executor = func(a Action) (string, error) { return "ok", nil }
+			}
+
+			output, err := executor(req.Action)
+			delete(c.inFlight, req.Action.Resource)
+
+			if err != nil {
+				c.report(Report{
+					AgentID:   req.AgentID,
+					EventType: "action_rejected",
+					Detail:    err.Error(),
+				})
+				req.Response <- ActionResult{Approved: false, Output: err.Error(), Error: err}
+			} else {
+				c.report(Report{
+					AgentID:   req.AgentID,
+					EventType: "action_approved",
+					Detail:    output,
+				})
+				_ = c.store.AppendAgentLog(req.AgentID, state.LogEntry{
+					Action: req.Action.Type,
+					Result: output,
+				})
+				req.Response <- ActionResult{Approved: true, Output: output}
+			}
+		}
+	}
+}
+
+func (c *Coordinator) report(r Report) {
+	if r.Timestamp.IsZero() {
+		r.Timestamp = time.Now()
+	}
+	select {
+	case c.reports <- r:
+	default:
+	}
+}
+
+func agentIDFor(event Event) string {
+	domain := event.Type
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%s-%s", domain, hex.EncodeToString(b))
+}
+
 func randBytes() []byte {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return b
-}
-
-func promptForImmediate(event Event) string {
-	comm := commFromData(event.Data)
-	cmdline := cmdlineFromData(event.Data)
-	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. You received a HIGH-PRIORITY event.
-
-Command: %s
-Full cmdline: %s
-Event type: %s
-Resource: %s
-
-Assess and act:
-- Sensitive file access (shadow, passwd, sudoers, SSH keys) → check if the access is legitimate, revert unauthorized changes
-- Service crash (process_exit with non-zero code) → read the error log, diagnose, fix if possible, restart
-- Dangerous permission changes (chmod 777 on sensitive files) → revert to safe permissions
-- Suspicious network connection → investigate the destination, block if unknown
-- Unknown binary from non-standard path → investigate what it is, check if it's malicious
-
-Use read_file and shell_read to investigate.
-Use request_action to execute commands: {"command": "the shell command to run", "reason": "why"}
-Be decisive. Act first, log your reasoning.`, comm, cmdline, event.Type, event.Resource)
-}
-
-func promptForProactive(event Event) string {
-	comm := commFromData(event.Data)
-	cmdline := cmdlineFromData(event.Data)
-	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. The user just ran a command that may benefit from proactive assistance.
-
-Command: %s
-Full cmdline: %s
-Event type: %s
-Resource: %s
-
-Analyze the command and its arguments. Take helpful action if appropriate:
-
-- mkdir with a project-like name → scaffold the project:
-  - Python-sounding name (api, flask, fastapi, django, cli, bot, scraper) → uv init, uv add appropriate packages, create main entry file
-  - JS/TS-sounding name (app, web, next, react, vue) → bun init, set up basic structure
-  - Go-sounding name (service, server, cmd) → go mod init, create main.go
-  - Generic → just create a README.md
-
-- git clone → after clone completes, check what's in the repo:
-  - pyproject.toml or requirements.txt → run uv sync or uv pip install -r requirements.txt
-  - package.json → run bun install
-  - go.mod → run go mod download
-  - .env.example → copy to .env
-
-- curl/wget downloading an archive (.tar.gz, .zip, .tgz) → extract after download completes
-
-- docker/podman run without --memory or --cpus → set reasonable defaults
-
-- uv/pip/npm/bun adding a package → note it in the log (future: security scan)
-
-- ssh-keygen with -t rsa → suggest ed25519 instead
-
-If the command is routine and needs no action, respond with just: "No action needed."
-Otherwise, use request_action: {"command": "cd /path && uv init && uv add fastapi", "reason": "scaffold Python FastAPI project"}
-If a tool is not installed, don't worry — the system will auto-install it.
-`, comm, cmdline, event.Type, event.Resource)
 }
 
 func cmdlineFromData(data string) string {
@@ -405,34 +342,37 @@ func cmdlineFromData(data string) string {
 	return payload.Cmdline
 }
 
-func promptForDigest() string {
-	return `You are Veronica, an autonomous OS intelligence layer. You are reviewing a periodic digest of system activity.
+// agentPrompt is the single generalized prompt for all event agents.
+// No hardcoded scenarios — the LLM decides what's interesting and what to do.
+const agentPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux operating system. You see everything happening via eBPF — every process, file access, network connection.
 
-Analyze the summary and recent events. Look for:
-- Anomalies: unusual patterns, unexpected processes, spikes in activity
-- Security concerns: suspicious file access, network connections, privilege changes
-- Performance issues: resource-heavy processes, repeated crashes
-- Opportunities: things you could optimize or automate
+You will receive a single eBPF event. Decide if it needs action.
 
-If everything looks normal, respond with just the text "System nominal." Do NOT use request_action for this.
-If you spot something actionable, use request_action: {"command": "the command", "reason": "why"}
+You have three tools:
+- read_file: read any file on the system
+- shell_read: run read-only commands (ls, ps, cat, stat, df, ip, ss, etc.)
+- request_action: execute any shell command ({"command": "...", "reason": "..."})
+
+Guidelines:
+- If a user is creating something (directory, project, repo), help set it up.
+- If something looks dangerous or unusual, investigate and act.
+- If a service crashes, diagnose and fix it.
+- If a tool is missing, request_action will auto-install it.
+- If the event is routine and needs no action, respond with just: "No action needed."
+
+Be concise. Don't over-explain. Act or don't.`
+
+// digestPrompt is for the periodic batch summary agent.
+const digestPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux operating system. You are reviewing a batch of recent eBPF events.
+
+Look for patterns that individual events wouldn't reveal:
+- Repeated failures or crashes
+- Unusual spikes in activity
+- Security anomalies
+- Opportunities to automate or optimize
+
+You have three tools: read_file, shell_read, request_action.
+
+If everything looks normal, respond with just: "System nominal."
+If you spot something actionable, use request_action: {"command": "...", "reason": "..."}
 Be concise.`
-}
-
-func (c *Coordinator) report(r Report) {
-	if r.Timestamp.IsZero() {
-		r.Timestamp = time.Now()
-	}
-	select {
-	case c.reports <- r:
-	default:
-		// drop if observer is slow
-	}
-}
-
-func agentIDFor(event Event) string {
-	domain := event.Type
-	b := make([]byte, 4)
-	rand.Read(b)
-	return fmt.Sprintf("%s-%s", domain, hex.EncodeToString(b))
-}
