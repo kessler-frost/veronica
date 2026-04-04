@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,10 @@ type Classifier struct {
 
 	// SelfComms are Veronica's own process names (always silent).
 	SelfComms map[string]bool
+
+	// IsOurPID, if non-nil, returns true for PIDs spawned by the coordinator's
+	// action executor. Such events are always silent to prevent feedback loops.
+	IsOurPID func(pid uint32) bool
 }
 
 // NewClassifier creates a classifier with default rules.
@@ -142,12 +147,18 @@ func NewClassifier() *Classifier {
 // Classify returns the category for an event.
 func (c *Classifier) Classify(event Event) EventCategory {
 	comm := commFromData(event.Data)
+	pid := pidFromData(event.Data)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	// Self is always silent
 	if c.SelfComms[comm] {
+		return CategorySilent
+	}
+
+	// Commands spawned by our own action executor are always silent
+	if c.IsOurPID != nil && pid > 0 && c.IsOurPID(pid) {
 		return CategorySilent
 	}
 
@@ -205,6 +216,16 @@ func filenameFromData(data string) string {
 		return ""
 	}
 	return data[start : start+end]
+}
+
+func pidFromData(data string) uint32 {
+	var payload struct {
+		PID uint32 `json:"pid"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return 0
+	}
+	return payload.PID
 }
 
 func isStandardPath(filename string) bool {

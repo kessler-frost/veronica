@@ -73,7 +73,10 @@ func (s *Store) SetAgentMeta(agentID string, meta AgentMeta) error {
 		return err
 	}
 	return s.db.Update(func(tx *buntdb.Tx) error {
-		_, _, err := tx.Set("agent:"+agentID+":meta", string(b), nil)
+		_, _, err := tx.Set("agent:"+agentID+":meta", string(b), &buntdb.SetOptions{
+			Expires: true,
+			TTL:     1 * time.Hour,
+		})
 		return err
 	})
 }
@@ -108,7 +111,10 @@ func (s *Store) AppendAgentLog(agentID string, entry LogEntry) error {
 	}
 	key := fmt.Sprintf("agent:%s:log:%020d", agentID, entry.Timestamp.UnixNano())
 	return s.db.Update(func(tx *buntdb.Tx) error {
-		_, _, err := tx.Set(key, string(b), nil)
+		_, _, err := tx.Set(key, string(b), &buntdb.SetOptions{
+			Expires: true,
+			TTL:     1 * time.Hour,
+		})
 		return err
 	})
 }

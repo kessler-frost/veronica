@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/fimbulwinter/veronica/internal/agent"
@@ -22,16 +23,33 @@ type Config struct {
 
 // Coordinator receives events, spawns agent goroutines, and serializes actions.
 type Coordinator struct {
-	client     *llm.Client
-	store      *state.Store
-	config     Config
-	classifier *Classifier
-	digest     *Digest
-	filter     *Filter
-	events     chan Event
-	actions    chan ActionRequest
-	reports    chan Report
-	inFlight   map[string]string // resource -> agentID currently acting on it
+	client       *llm.Client
+	store        *state.Store
+	config       Config
+	classifier   *Classifier
+	digest       *Digest
+	filter       *Filter
+	events       chan Event
+	actions      chan ActionRequest
+	reports      chan Report
+	inFlight     map[string]string // resource -> agentID currently acting on it
+	executorPIDs sync.Map          // pid (uint32) -> true; PIDs of commands we spawned
+}
+
+// IsOurPID reports whether the given PID belongs to a command we spawned.
+func (c *Coordinator) IsOurPID(pid uint32) bool {
+	_, ok := c.executorPIDs.Load(pid)
+	return ok
+}
+
+// TrackPID records a PID as belonging to a command we spawned.
+func (c *Coordinator) TrackPID(pid uint32) {
+	c.executorPIDs.Store(pid, true)
+}
+
+// UntrackPID removes a PID from our tracking set.
+func (c *Coordinator) UntrackPID(pid uint32) {
+	c.executorPIDs.Delete(pid)
 }
 
 // New creates a coordinator.
@@ -39,7 +57,7 @@ func New(client *llm.Client, store *state.Store, cfg Config) *Coordinator {
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 10
 	}
-	return &Coordinator{
+	c := &Coordinator{
 		client:     client,
 		store:      store,
 		config:     cfg,
@@ -51,6 +69,8 @@ func New(client *llm.Client, store *state.Store, cfg Config) *Coordinator {
 		reports:    make(chan Report, 256),
 		inFlight:   make(map[string]string),
 	}
+	c.classifier.IsOurPID = c.IsOurPID
+	return c
 }
 
 // Start begins the coordinator's event processing, action queue, and digest loops.
@@ -79,18 +99,23 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-c.events:
-			c.store.RecordEvent(state.Event{
-				Type:      event.Type,
-				Resource:  event.Resource,
-				Data:      event.Data,
-				Timestamp: event.Timestamp,
-			})
-
 			category := c.classifier.Classify(event)
+
+			// Only record non-silent events
+			if category != CategorySilent {
+				if err := c.store.RecordEvent(state.Event{
+					Type:      event.Type,
+					Resource:  event.Resource,
+					Data:      event.Data,
+					Timestamp: event.Timestamp,
+				}); err != nil {
+					log.Printf("record event: %v", err)
+				}
+			}
 
 			switch category {
 			case CategorySilent:
-				// logged to store above, nothing else
+				// nothing to do
 			case CategoryPolicy:
 				// TODO: enforce from eBPF map directly
 			case CategoryImmediate:

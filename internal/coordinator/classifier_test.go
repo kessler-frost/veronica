@@ -97,6 +97,15 @@ func TestClassifier_RulesAreReconfigurable(t *testing.T) {
 	}
 }
 
+func TestClassifier_OurPIDIsSilent(t *testing.T) {
+	c := NewClassifier()
+	c.IsOurPID = func(pid uint32) bool { return pid == 42 }
+	event := Event{Type: "process_exec", Resource: "pid:42", Data: `{"comm":"mkdir","pid":42}`}
+	if got := c.Classify(event); got != CategorySilent {
+		t.Fatalf("expected silent for our PID, got %s", got)
+	}
+}
+
 func TestDigest_AddAndFlush(t *testing.T) {
 	d := NewDigest(5 * time.Second)
 
