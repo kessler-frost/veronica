@@ -86,7 +86,10 @@ class BaseAgent(ABC):
     async def kv_keys(self, bucket: str) -> list[str]:
         """List all keys in a NATS KV bucket."""
         kv = await self._js.key_value(bucket)
-        return await kv.keys()
+        try:
+            return await kv.keys()
+        except Exception:
+            return []
 
     async def _run_llm_loop(self, event_data: dict, context_append: str = "") -> str:
         """Run the LLM tool-calling loop. Returns final LLM response text."""
