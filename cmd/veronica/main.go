@@ -15,7 +15,7 @@ import (
 
 func main() {
 	llmURL := envOr("VERONICA_LLM_URL", "http://host.lima.internal:1234")
-	llmModel := envOr("VERONICA_LLM_MODEL", "qwen3.5-35b")
+	llmModel := envOr("VERONICA_LLM_MODEL", "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled")
 	stateDB := envOr("VERONICA_STATE_DB", "/var/veronica/state.db")
 
 	log.Printf("veronica starting")

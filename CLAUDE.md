@@ -39,6 +39,17 @@
 - Tests (non-eBPF): `go test ./internal/agent/ ./internal/llm/ ./internal/tool/ ./internal/state/ ./internal/coordinator/` — works on macOS
 - Tests (eBPF): must run in VM
 
+## LM Studio (Runtime LLM)
+- Model: `mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled` (Jackrong/MLX-Qwen3.5-35B-A3B-Claude-4.6-Opus-Reasoning-Distilled-4bit)
+- Start server: `lms server start`
+- Load model: `lms load mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled -c 262144 --parallel 4 --gpu max`
+- Context: 262144 (256k) — always use max
+- Parallel inference: 4 concurrent requests
+- API: `http://localhost:1234/v1/chat/completions` (OpenAI-compatible)
+- From VM: `http://host.lima.internal:1234`
+- Model supports tool use natively (`trainedForToolUse: true`)
+- Check status: `lms ps --json`
+
 ## Build Tools
 - Go modules for the main project
 - Cilium's `ebpf` Go package for eBPF program loading/interaction
