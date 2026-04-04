@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -73,6 +75,19 @@ func (m *Manager) LoadAndAttach() error {
 		}
 	}
 
+	// Process exit tracepoint (non-fatal if unavailable)
+	exitObjs := bpf.ProcessExitObjects{}
+	if err := bpf.LoadProcessExitObjects(&exitObjs, nil); err != nil {
+		log.Printf("WARN: load process_exit: %v", err)
+	} else {
+		exitLink, err := link.Tracepoint("sched", "sched_process_exit", exitObjs.TraceExit, nil)
+		if err != nil {
+			log.Printf("WARN: attach process_exit: %v", err)
+		} else {
+			m.links = append(m.links, exitLink)
+		}
+	}
+
 	return nil
 }
 
@@ -115,10 +130,22 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
+		cmdline := readCmdline(e.Header.PID)
 		return &coordinator.Event{
 			Type:     "process_exec",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
-			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID),
+			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, cmdline),
+		}
+
+	case EventProcessExit:
+		var e ProcessExitEvent
+		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
+			return nil
+		}
+		return &coordinator.Event{
+			Type:     "process_exit",
+			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
+			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"uid":%d,"exit_code":%d}`, e.Header.CommString(), e.Header.PID, e.Header.UID, e.ExitCode),
 		}
 
 	case EventFileOpen:
@@ -157,4 +184,19 @@ func (m *Manager) Close() error {
 		l.Close()
 	}
 	return nil
+}
+
+// readCmdline reads the full command line for a process from /proc/<pid>/cmdline.
+// The kernel stores arguments as null-separated bytes; we convert them to spaces.
+func readCmdline(pid uint32) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return ""
+	}
+	for i, b := range data {
+		if b == 0 {
+			data[i] = ' '
+		}
+	}
+	return strings.TrimSpace(string(data))
 }

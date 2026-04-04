@@ -22,14 +22,16 @@ type Config struct {
 
 // Coordinator receives events, spawns agent goroutines, and serializes actions.
 type Coordinator struct {
-	client   *llm.Client
-	store    *state.Store
-	config   Config
-	filter   *Filter
-	events   chan Event
-	actions  chan ActionRequest
-	reports  chan Report
-	inFlight map[string]string // resource -> agentID currently acting on it
+	client     *llm.Client
+	store      *state.Store
+	config     Config
+	classifier *Classifier
+	digest     *Digest
+	filter     *Filter
+	events     chan Event
+	actions    chan ActionRequest
+	reports    chan Report
+	inFlight   map[string]string // resource -> agentID currently acting on it
 }
 
 // New creates a coordinator.
@@ -38,21 +40,24 @@ func New(client *llm.Client, store *state.Store, cfg Config) *Coordinator {
 		cfg.MaxTurns = 10
 	}
 	return &Coordinator{
-		client:   client,
-		store:    store,
-		config:   cfg,
-		filter:   NewFilter(10),
-		events:   make(chan Event, 64),
-		actions:  make(chan ActionRequest, 64),
-		reports:  make(chan Report, 256),
-		inFlight: make(map[string]string),
+		client:     client,
+		store:      store,
+		config:     cfg,
+		classifier: NewClassifier(),
+		digest:     NewDigest(5 * time.Second),
+		filter:     NewFilter(10),
+		events:     make(chan Event, 64),
+		actions:    make(chan ActionRequest, 64),
+		reports:    make(chan Report, 256),
+		inFlight:   make(map[string]string),
 	}
 }
 
-// Start begins the coordinator's event processing and action queue loops.
+// Start begins the coordinator's event processing, action queue, and digest loops.
 func (c *Coordinator) Start(ctx context.Context) {
 	go c.eventLoop(ctx)
 	go c.actionLoop(ctx)
+	go c.digestLoop(ctx)
 }
 
 // HandleEvent sends an event to the coordinator for processing.
@@ -80,18 +85,60 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 				Data:      event.Data,
 				Timestamp: event.Timestamp,
 			})
-			if c.filter.ShouldProcess(event) {
-				c.filter.AgentStarted()
-				go func() {
-					defer c.filter.AgentFinished()
-					c.spawnAgent(ctx, event)
-				}()
+
+			category := c.classifier.Classify(event)
+
+			switch category {
+			case CategorySilent:
+				// logged to store above, nothing else
+			case CategoryPolicy:
+				// TODO: enforce from eBPF map directly
+			case CategoryImmediate:
+				if c.filter.ShouldProcess(event) {
+					c.filter.AgentStarted()
+					go func() {
+						defer c.filter.AgentFinished()
+						c.spawnAgent(ctx, event, promptForImmediate(event))
+					}()
+				}
+			case CategoryProactive:
+				if c.filter.ShouldProcess(event) {
+					c.filter.AgentStarted()
+					go func() {
+						defer c.filter.AgentFinished()
+						c.spawnAgent(ctx, event, promptForProactive(event))
+					}()
+				}
+			case CategoryDigest:
+				c.digest.Add(event)
 			}
 		}
 	}
 }
 
-func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
+func (c *Coordinator) digestLoop(ctx context.Context) {
+	ticker := time.NewTicker(c.digest.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			events := c.digest.Flush()
+			if len(events) == 0 {
+				continue
+			}
+			c.filter.AgentStarted()
+			go func() {
+				defer c.filter.AgentFinished()
+				c.spawnDigestAgent(ctx, events)
+			}()
+		}
+	}
+}
+
+func (c *Coordinator) spawnAgent(ctx context.Context, event Event, systemPrompt string) {
 	agentID := agentIDFor(event)
 
 	c.store.SetAgentMeta(agentID, state.AgentMeta{
@@ -107,10 +154,10 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 
 	toolkit := NewToolkit(c.actions, agentID)
 
-	userMsg := fmt.Sprintf("eBPF event: type=%s resource=%s data=%s\nHandle this event.", event.Type, event.Resource, event.Data)
+	userMsg := fmt.Sprintf("eBPF event: type=%s resource=%s data=%s", event.Type, event.Resource, event.Data)
 
 	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
-		SystemPrompt: c.config.SystemPrompt,
+		SystemPrompt: systemPrompt,
 		MaxTurns:     c.config.MaxTurns,
 	}, userMsg)
 
@@ -194,6 +241,118 @@ func (c *Coordinator) actionLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
+	agentID := fmt.Sprintf("digest-%s", hex.EncodeToString(randBytes()))
+
+	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
+		Task:   fmt.Sprintf("digest: %d events", len(events)),
+		Status: "active",
+	})
+
+	c.report(Report{
+		AgentID:   agentID,
+		EventType: "spawned",
+		Detail:    fmt.Sprintf("digest: %d events", len(events)),
+	})
+
+	toolkit := NewToolkit(c.actions, agentID)
+
+	// Build summary
+	typeCounts := make(map[string]int)
+	for _, e := range events {
+		typeCounts[e.Type]++
+	}
+	summary := fmt.Sprintf("Activity digest (%d events in last %s):\n", len(events), c.digest.interval)
+	for t, count := range typeCounts {
+		summary += fmt.Sprintf("  %s: %d events\n", t, count)
+	}
+	summary += "\nRecent events:\n"
+	// Show last 10 events
+	start := len(events) - 10
+	if start < 0 {
+		start = 0
+	}
+	for _, e := range events[start:] {
+		summary += fmt.Sprintf("  [%s] %s: %s\n", e.Type, e.Resource, e.Data)
+	}
+
+	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
+		SystemPrompt: promptForDigest(),
+		MaxTurns:     c.config.MaxTurns,
+	}, summary)
+
+	if err != nil {
+		log.Printf("digest agent %s error: %v", agentID, err)
+	} else {
+		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
+			Action: "digest", Result: result.Response,
+		})
+	}
+
+	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
+		Task:   fmt.Sprintf("digest: %d events", len(events)),
+		Status: "done",
+	})
+
+	c.report(Report{
+		AgentID:   agentID,
+		EventType: "completed",
+		Detail:    fmt.Sprintf("digest: %d events processed", len(events)),
+	})
+}
+
+func randBytes() []byte {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return b
+}
+
+func promptForImmediate(event Event) string {
+	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. You received a HIGH-PRIORITY event that needs immediate attention.
+
+Analyze this event and take appropriate action. You have tools:
+- read_file: read any file
+- shell_read: run read-only commands (ls, ps, cat, etc.)
+- request_action: request the coordinator to execute a write/modify action
+
+Event type: %s
+Resource: %s
+
+Assess the security and operational implications. If action is needed, use request_action.
+Be concise. Focus on what matters.`, event.Type, event.Resource)
+}
+
+func promptForProactive(event Event) string {
+	comm := commFromData(event.Data)
+	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. The user just ran a command that might benefit from proactive assistance.
+
+Command: %s
+Event type: %s
+Resource: %s
+
+Based on the command and its arguments, determine if you should set something up or prepare the environment. Examples:
+- mkdir with a project-like name → scaffold the project (use uv for Python, bun for JS, go mod init for Go)
+- git clone → check if dependencies need installing
+- docker run → suggest resource limits
+
+If the command is routine and needs no action, just respond with "No action needed."
+Use request_action to execute any setup commands.`, comm, event.Type, event.Resource)
+}
+
+func promptForDigest() string {
+	return `You are Veronica, an autonomous OS intelligence layer. You are reviewing a periodic digest of system activity.
+
+Analyze the summary and recent events. Look for:
+- Anomalies: unusual patterns, unexpected processes, spikes in activity
+- Security concerns: suspicious file access, network connections, privilege changes
+- Performance issues: resource-heavy processes, repeated crashes
+- Opportunities: things you could optimize or automate
+
+If everything looks normal, respond with "System nominal."
+If you spot something actionable, use request_action to address it.
+Be concise.`
 }
 
 func (c *Coordinator) report(r Report) {

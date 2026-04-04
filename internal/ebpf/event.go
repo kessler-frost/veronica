@@ -7,6 +7,7 @@ const (
 	EventProcessExec EventType = 1
 	EventFileOpen    EventType = 2
 	EventNetConnect  EventType = 3
+	EventProcessExit EventType = 4
 )
 
 // EventHeader is the common header for all eBPF events.
@@ -39,6 +40,13 @@ type NetConnectEvent struct {
 	DAddr  uint32
 	DPort  uint16
 	Family uint16
+}
+
+// ProcessExitEvent is emitted when a process exits.
+type ProcessExitEvent struct {
+	Header   EventHeader
+	ExitCode int32
+	_        uint32 // padding
 }
 
 // CommString returns the command name as a trimmed string.

@@ -12,6 +12,7 @@
 #define EVENT_PROCESS_EXEC  1
 #define EVENT_FILE_OPEN     2
 #define EVENT_NET_CONNECT   3
+#define EVENT_PROCESS_EXIT  4
 
 struct vr_event_header {
     __u32 type;
@@ -39,6 +40,12 @@ struct vr_net_connect_event {
     __u32 daddr;
     __u16 dport;
     __u16 family;
+};
+
+struct vr_process_exit_event {
+    struct vr_event_header hdr;
+    __s32 exit_code;
+    __u32 _pad;
 };
 
 #endif

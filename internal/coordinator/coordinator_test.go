@@ -106,7 +106,7 @@ func TestCoordinator_ActionApproved(t *testing.T) {
 
 	c.Start(ctx)
 
-	c.HandleEvent(Event{Type: "test", Resource: "pid:42", Data: `{}`})
+	c.HandleEvent(Event{Type: "process_exec", Resource: "pid:42", Data: `{"comm":"nginx"}`})
 
 	deadline := time.After(3 * time.Second)
 	for callCount < 2 {
@@ -144,7 +144,7 @@ func TestCoordinator_Reports(t *testing.T) {
 	reports := c.Reports()
 	c.Start(ctx)
 
-	c.HandleEvent(Event{Type: "test", Resource: "test", Data: `{}`})
+	c.HandleEvent(Event{Type: "process_exec", Resource: "pid:99", Data: `{"comm":"sudo"}`})
 
 	// Should receive at least a "spawned" report
 	select {
