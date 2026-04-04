@@ -25,22 +25,18 @@ class DynamicAgent(BaseAgent):
         context_append: str,
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
-        llm_max_turns: int = 10,
     ):
         super().__init__(
             agent_id=agent_id,
             nats_url=nats_url,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
-            llm_max_turns=llm_max_turns,
         )
         self.subscribed_events = events
-        self.context_append = context_append
+        self._context_append = context_append
 
-    async def on_event(self, subject: str, data: dict) -> None:
-        logger.info("[%s] event on %s: %s", self.agent_id, subject, data.get("resource", ""))
-        response = await self._run_llm_loop(data, context_append=self.context_append)
-        logger.info("[%s] LLM response: %s", self.agent_id, response[:200] if response else "none")
+    def get_context_append(self) -> str:
+        return self._context_append
 
 
 class AgentRunner:
@@ -98,7 +94,6 @@ class AgentRunner:
             context_append=config.get("context", ""),
             llm_base_url=self.cfg.llm_base_url,
             llm_model=self.cfg.llm_model,
-            llm_max_turns=self.cfg.llm_max_turns,
         )
         self._agents[agent_id] = agent
         self._tasks[agent_id] = asyncio.create_task(agent.run())

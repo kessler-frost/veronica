@@ -1,8 +1,9 @@
 package event
 
 import (
-	"encoding/json"
 	"time"
+
+	json "github.com/goccy/go-json"
 )
 
 // Event is an eBPF event received from the kernel.

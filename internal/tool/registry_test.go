@@ -2,8 +2,9 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
+
+	json "github.com/goccy/go-json"
 )
 
 func TestRegistry_RegisterAndCall(t *testing.T) {

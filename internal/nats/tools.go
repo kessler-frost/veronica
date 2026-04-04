@@ -3,11 +3,12 @@ package nats
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os/exec"
 	"strings"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/nats-io/nats.go"
 )

@@ -1,9 +1,10 @@
 package nats
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/fimbulwinter/veronica/internal/classifier"
 )

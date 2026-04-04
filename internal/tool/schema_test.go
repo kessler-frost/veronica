@@ -1,8 +1,9 @@
 package tool
 
 import (
-	"encoding/json"
 	"testing"
+
+	json "github.com/goccy/go-json"
 )
 
 func TestSchemaFromStruct_SimpleFields(t *testing.T) {

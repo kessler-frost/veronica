@@ -2,9 +2,10 @@ package nats
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/nats-io/nats.go/jetstream"
 

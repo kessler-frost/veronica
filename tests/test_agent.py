@@ -14,18 +14,21 @@ class EchoAgent(BaseAgent):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.received = []
+        self.received: list[bytes] = []
         self.last_result = None
 
-    async def on_event(self, subject: str, data: dict) -> None:
-        self.received.append(data)
-        result = await self.call_tool("exec", {"command": "echo hello", "reason": "test"})
+    def get_context_append(self) -> str:
+        return "Echo test agent."
+
+    async def _handle_event(self, subject: str, raw_data: bytes) -> None:
+        self.received.append(raw_data)
+        result = await self._call_nats_tool("exec", {"command": "echo hello", "reason": "test"})
         self.last_result = result
 
 
 @pytest.mark.asyncio
 async def test_agent_call_tool():
-    """Test that call_tool sends NATS request and receives response."""
+    """Test that _call_nats_tool sends NATS request and receives response."""
     try:
         nc = await nats_client.connect("nats://localhost:4222")
     except Exception:
@@ -42,7 +45,7 @@ async def test_agent_call_tool():
     agent._nc = nc
     agent._js = nc.jetstream()
 
-    result = await agent.call_tool("exec", {"command": "echo hello", "reason": "test"})
+    result = await agent._call_nats_tool("exec", {"command": "echo hello", "reason": "test"})
     assert result["ok"] is True
     assert result["data"] == "hello"
 

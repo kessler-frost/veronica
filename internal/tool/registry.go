@@ -2,8 +2,9 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+
+	json "github.com/goccy/go-json"
 )
 
 // entry holds a tool's definition and its untyped executor.

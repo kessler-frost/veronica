@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 
 import msgspec
-
-from veronica.llm import LLMClient
+from agno.agent import Agent
+from agno.models.lmstudio import LMStudio
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +37,16 @@ async def create_agent_config(description: str, llm_base_url: str, llm_model: st
 
     Returns dict with keys: name, events, context
     """
-    llm = LLMClient(base_url=llm_base_url, model=llm_model)
+    agent = Agent(
+        model=LMStudio(id=llm_model, base_url=llm_base_url),
+        instructions=CREATOR_PROMPT,
+        markdown=False,
+    )
 
-    response = await llm.chat([
-        {"role": "system", "content": CREATOR_PROMPT},
-        {"role": "user", "content": description},
-    ])
+    response = await agent.arun(description)
+    content = response.content.strip() if response else ""
 
-    content = response["choices"][0]["message"]["content"]
-    config = msgspec.json.decode(content.strip().encode(), type=dict)
+    config = msgspec.json.decode(content.encode(), type=dict)
 
     missing = {"name", "events", "context"} - set(config.keys())
     if missing:
@@ -55,5 +56,4 @@ async def create_agent_config(description: str, llm_base_url: str, llm_model: st
     if invalid:
         raise ValueError(f"Invalid event types: {invalid}")
 
-    await llm.close()
     return config

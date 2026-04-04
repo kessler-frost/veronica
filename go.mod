@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/cilium/ebpf v0.21.0
+	github.com/goccy/go-json v0.10.6
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.50.0
 )
