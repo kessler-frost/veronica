@@ -23,11 +23,17 @@ type Manager struct {
 	links   []link.Link
 	readers []*ringbuf.Reader
 	events  chan<- event.Event
+	maps    *MapManager
 }
 
 // New creates an eBPF manager that sends events to the given channel.
 func New(events chan<- event.Event) *Manager {
-	return &Manager{events: events}
+	return &Manager{events: events, maps: NewMapManager()}
+}
+
+// Maps returns the MapManager for named eBPF map access.
+func (m *Manager) Maps() *MapManager {
+	return m.maps
 }
 
 // LoadAndAttach loads all eBPF programs and attaches them to hooks.
@@ -37,6 +43,8 @@ func (m *Manager) LoadAndAttach() error {
 	if err := bpf.LoadProcessExecObjects(&procObjs, nil); err != nil {
 		return fmt.Errorf("load process_exec: %w", err)
 	}
+
+	m.maps.Register("process_exec_events", procObjs.Events)
 
 	procLink, err := link.Tracepoint("sched", "sched_process_exec", procObjs.TraceExec, nil)
 	if err != nil {
@@ -60,6 +68,7 @@ func (m *Manager) LoadAndAttach() error {
 	if err := bpf.LoadNetConnectObjects(&netObjs, nil); err != nil {
 		log.Printf("WARN: load net_connect: %v", err)
 	} else {
+		m.maps.Register("net_connect_events", netObjs.Events)
 		netLink, err := link.Kprobe("tcp_v4_connect", netObjs.TraceConnect, nil)
 		if err != nil {
 			log.Printf("WARN: attach net_connect: %v", err)
@@ -76,6 +85,7 @@ func (m *Manager) LoadAndAttach() error {
 	if err := bpf.LoadProcessExitObjects(&exitObjs, nil); err != nil {
 		log.Printf("WARN: load process_exit: %v", err)
 	} else {
+		m.maps.Register("process_exit_events", exitObjs.Events)
 		exitLink, err := link.Tracepoint("sched", "sched_process_exit", exitObjs.TraceExit, nil)
 		if err != nil {
 			log.Printf("WARN: attach process_exit: %v", err)
