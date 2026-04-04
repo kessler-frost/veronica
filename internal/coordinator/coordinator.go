@@ -150,6 +150,7 @@ func (c *Coordinator) digestLoop(ctx context.Context) {
 
 func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 	agentID := agentIDFor(event)
+	startTime := time.Now()
 
 	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
 		Task:   fmt.Sprintf("%s on %s", event.Type, event.Resource),
@@ -173,17 +174,19 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 		MaxTurns:     c.config.MaxTurns,
 	}, userMsg)
 
+	duration := time.Since(startTime)
+
 	if err != nil {
-		log.Printf("agent %s error: %v", agentID, err)
+		log.Printf("agent %s error after %s: %v", agentID, duration.Round(time.Second), err)
 		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
 			Action: "error", Result: err.Error(),
 		})
 	} else {
+		log.Printf("agent %s done in %s (%d turns): %s", agentID, duration.Round(time.Second), result.Turns, truncate(result.Response, 100))
 		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
 			Action: "completed", Result: result.Response,
 		})
 	}
-
 	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
 		Task:   fmt.Sprintf("%s on %s", event.Type, event.Resource),
 		Status: "done",
@@ -192,6 +195,7 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 	c.report(Report{
 		AgentID:   agentID,
 		EventType: "completed",
+		Detail:    fmt.Sprintf("took %s", duration.Round(time.Second)),
 	})
 }
 
@@ -332,6 +336,13 @@ func randBytes() []byte {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return b
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func cmdlineFromData(data string) string {

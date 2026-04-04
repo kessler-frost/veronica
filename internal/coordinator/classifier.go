@@ -73,6 +73,18 @@ func NewClassifier() *Classifier {
 			"grepconf.sh": true, "tty": true, "locale": true,
 			"dircolors": true, "lesspipe.sh": true, "env": true,
 			"id": true, "hostname": true, "uname": true,
+			// Dynamic linker and low-level runtime
+			"ld-linux-aarch64.so.1": true, "ld-linux-x86-64.so.2": true,
+			"ldconfig": true,
+			// Common non-interactive tools
+			"unix_chkpwd": true, "sudo": true,
+			"grep": true, "sed": true, "awk": true, "cut": true,
+			"sort": true, "uniq": true, "tr": true, "wc": true,
+			"head": true, "tail": true, "cat": true,
+			"ls": true, "stat": true, "find": true, "test": true,
+			"[": true, "true": true, "false": true,
+			"echo": true, "printf": true, "date": true, "sleep": true,
+			"rm": true, "cp": true, "mv": true,
 		},
 
 		SilentPrefixes: []string{
