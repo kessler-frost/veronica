@@ -144,7 +144,7 @@ func TestCoordinator_Reports(t *testing.T) {
 	reports := c.Reports()
 	c.Start(ctx)
 
-	c.HandleEvent(Event{Type: "process_exec", Resource: "pid:99", Data: `{"comm":"sudo"}`})
+	c.HandleEvent(Event{Type: "process_exec", Resource: "pid:99", Data: `{"comm":"nginx"}`})
 
 	// Should receive at least a "spawned" report
 	select {

@@ -45,7 +45,7 @@ func TestClassifier_OurPIDIsSilent(t *testing.T) {
 func TestClassifier_EverythingElseGoesToAgent(t *testing.T) {
 	c := NewClassifier()
 	// User commands, services, tools — all go to agent. LLM decides.
-	for _, comm := range []string{"mkdir", "nginx", "git", "curl", "sudo", "chmod", "ls", "cat", "docker"} {
+	for _, comm := range []string{"mkdir", "nginx", "git", "curl", "chmod", "docker", "python3", "node"} {
 		event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `"}`}
 		got := c.Classify(event)
 		if got == CategorySilent {

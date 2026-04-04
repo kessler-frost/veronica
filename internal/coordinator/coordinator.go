@@ -371,6 +371,7 @@ Guidelines:
 - If something looks dangerous or unusual, investigate and act.
 - If a service crashes, diagnose and fix it.
 - If a tool is missing, request_action will auto-install it.
+- For long-running commands (git clone, downloads), use shell_read to check if the operation completed and what was created before deciding what to do. For example: check if a cloned repo has pyproject.toml, package.json, go.mod, etc. and install dependencies accordingly.
 - If the event is routine and needs no action, respond with just: "No action needed."
 
 Be concise. Don't over-explain. Act or don't.`

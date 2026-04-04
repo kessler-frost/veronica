@@ -15,6 +15,7 @@ var allowedCommands = map[string]bool{
 	"uptime": true, "free": true, "id": true, "echo": true, "head": true,
 	"tail": true, "wc": true, "du": true, "mount": true, "lsblk": true,
 	"top": true, "netstat": true, "lsof": true, "file": true, "which": true,
+	"sleep": true, "test": true, "find": true, "grep": true,
 }
 
 type readFileArgs struct {

@@ -136,10 +136,11 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 			// Fall back to /proc if eBPF args are empty
 			args = readCmdline(e.Header.PID)
 		}
+		cwd := readCwd(e.Header.PID)
 		return &coordinator.Event{
 			Type:     "process_exec",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
-			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, args),
+			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q,"cwd":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, args, cwd),
 		}
 
 	case EventProcessExit:
@@ -189,6 +190,15 @@ func (m *Manager) Close() error {
 		l.Close()
 	}
 	return nil
+}
+
+// readCwd reads the current working directory for a process.
+func readCwd(pid uint32) string {
+	target, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+	if err != nil {
+		return ""
+	}
+	return target
 }
 
 // readCmdline reads the full command line for a process from /proc/<pid>/cmdline.
