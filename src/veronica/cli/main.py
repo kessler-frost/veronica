@@ -8,8 +8,11 @@ import logging
 import os
 import subprocess
 
+import msgspec
+import nats as nats_client
 import typer
 
+from veronica.agents.creator import create_agent_config
 from veronica.config import VeronicaConfig
 
 app = typer.Typer(help="Control the Veronica eBPF intelligence layer.")
@@ -136,27 +139,93 @@ def vm_ssh():
     os.execv(limactl, ["limactl", "shell", cfg.vm_name])
 
 
-# --- Agent subcommands (Phase 2 stubs) ---
+# --- Agent subcommands ---
+
+@agent_app.command("add")
+def agent_add(description: str = typer.Argument(help="Natural language description")):
+    """Create an agent from natural language."""
+
+    async def _add():
+        config = await create_agent_config(description, cfg.llm_base_url, cfg.llm_model)
+
+        nc = await nats_client.connect(cfg.nats_url)
+        js = nc.jetstream()
+        kv = await js.key_value("agents")
+
+        agent_data = {
+            "events": config["events"],
+            "context": config["context"],
+            "status": "active",
+            "description": description,
+        }
+        await kv.put(config["name"], msgspec.json.encode(agent_data))
+        await nc.close()
+
+        typer.echo(f"Created agent '{config['name']}'")
+        typer.echo(f"  Subscribed to: {', '.join(config['events'])}")
+        typer.echo(f"  Context: {config['context']}")
+
+    asyncio.run(_add())
+
 
 @agent_app.command("list")
 def agent_list():
     """List all registered agents."""
-    typer.echo("Agent management coming in Phase 2. Use NATS KV directly for now.")
 
+    async def _list():
+        nc = await nats_client.connect(cfg.nats_url)
+        js = nc.jetstream()
+        kv = await js.key_value("agents")
 
-@agent_app.command("add")
-def agent_add(description: str = typer.Argument(help="Natural language description")):
-    """Create an agent from natural language. (Phase 2)"""
-    typer.echo(f"Agent creation coming in Phase 2. Description: {description}")
+        try:
+            keys = await kv.keys()
+        except Exception:
+            typer.echo("No agents registered.")
+            await nc.close()
+            return
+
+        for key in keys:
+            entry = await kv.get(key)
+            config = msgspec.json.decode(entry.value, type=dict)
+            status = config.get("status", "unknown")
+            desc = config.get("description", config.get("context", ""))
+            events = ", ".join(config.get("events", []))
+            typer.echo(f"  {key:20s} {status:10s} events=[{events}]  {desc[:60]}")
+
+        await nc.close()
+
+    asyncio.run(_list())
 
 
 @agent_app.command("stop")
 def agent_stop(name: str = typer.Argument(help="Agent name")):
-    """Stop a specific agent. (Phase 2)"""
-    typer.echo(f"Agent stop coming in Phase 2. Name: {name}")
+    """Stop a specific agent."""
+
+    async def _stop():
+        nc = await nats_client.connect(cfg.nats_url)
+        js = nc.jetstream()
+        kv = await js.key_value("agents")
+
+        entry = await kv.get(name)
+        config = msgspec.json.decode(entry.value, type=dict)
+        config["status"] = "stopped"
+        await kv.put(name, msgspec.json.encode(config))
+        await nc.close()
+        typer.echo(f"Stopped agent '{name}'")
+
+    asyncio.run(_stop())
 
 
 @agent_app.command("rm")
 def agent_rm(name: str = typer.Argument(help="Agent name")):
-    """Remove an agent. (Phase 2)"""
-    typer.echo(f"Agent remove coming in Phase 2. Name: {name}")
+    """Remove an agent."""
+
+    async def _rm():
+        nc = await nats_client.connect(cfg.nats_url)
+        js = nc.jetstream()
+        kv = await js.key_value("agents")
+        await kv.delete(name)
+        await nc.close()
+        typer.echo(f"Removed agent '{name}'")
+
+    asyncio.run(_rm())
