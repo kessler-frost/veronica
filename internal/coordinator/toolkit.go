@@ -16,6 +16,9 @@ var allowedCommands = map[string]bool{
 	"tail": true, "wc": true, "du": true, "mount": true, "lsblk": true,
 	"top": true, "netstat": true, "lsof": true, "file": true, "which": true,
 	"sleep": true, "test": true, "find": true, "grep": true,
+	"nginx": true, "python3": true, "node": true, "go": true,
+	"journalctl": true, "systemctl": true, "docker": true,
+	"dig": true, "nslookup": true, "curl": true, "wget": true,
 }
 
 type readFileArgs struct {

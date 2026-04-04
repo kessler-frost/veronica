@@ -85,11 +85,19 @@ func NewClassifier() *Classifier {
 			"[": true, "true": true, "false": true,
 			"echo": true, "printf": true, "date": true, "sleep": true,
 			"rm": true, "cp": true, "mv": true,
+			// Package manager internals
+			"selinuxenabled": true, "restorecon": true, "chcon": true,
+			"gtk-update-icon-cache": true,
+			"update-mime-database":  true, "glib-compile-schemas": true,
+			"fc-cache": true, "mandb": true, "install-info": true,
+			// systemd generators
+			"zram-generator": true, "cloud-init-generator": true,
 		},
 
 		SilentPrefixes: []string{
 			"systemd-", "dbus-", "lima-",
 			"gsd-", "gdm-", "gnome-", "xdg-",
+			"podman-", "containerd-",
 		},
 	}
 }
