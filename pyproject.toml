@@ -5,9 +5,9 @@ description = "Veronica host agents and CLI"
 requires-python = ">=3.12"
 dependencies = [
     "msgspec>=0.19",
+    "nats-py>=2.0",
     "pydantic-settings>=2.0",
     "typer>=0.15",
-    "websockets>=15.0",
 ]
 
 [project.scripts]
