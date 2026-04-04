@@ -5,11 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fimbulwinter/veronica/internal/state"
 )
 
 func TestToolkit_ReadFileRegistered(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
 	actionCh := make(chan ActionRequest, 1)
-	reg := NewToolkit(actionCh, "test-agent")
+	reg := NewToolkit(actionCh, "test-agent", store)
 
 	defs := reg.Definitions()
 	found := false
@@ -26,10 +30,14 @@ func TestToolkit_ReadFileRegistered(t *testing.T) {
 func TestToolkit_ReadFileExecutes(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "test.txt")
-	os.WriteFile(testFile, []byte("hello world"), 0644)
+	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
 
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
 	actionCh := make(chan ActionRequest, 1)
-	reg := NewToolkit(actionCh, "test-agent")
+	reg := NewToolkit(actionCh, "test-agent", store)
 
 	result, err := reg.Call(context.Background(), "read_file", `{"path":"`+testFile+`"}`)
 	if err != nil {
@@ -45,8 +53,10 @@ func TestToolkit_ReadFileExecutes(t *testing.T) {
 }
 
 func TestToolkit_RequestActionSendsToChannel(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
 	actionCh := make(chan ActionRequest, 1)
-	reg := NewToolkit(actionCh, "test-agent")
+	reg := NewToolkit(actionCh, "test-agent", store)
 
 	go func() {
 		req := <-actionCh
@@ -76,8 +86,10 @@ func TestToolkit_RequestActionSendsToChannel(t *testing.T) {
 }
 
 func TestToolkit_RequestActionRejected(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
 	actionCh := make(chan ActionRequest, 1)
-	reg := NewToolkit(actionCh, "test-agent")
+	reg := NewToolkit(actionCh, "test-agent", store)
 
 	go func() {
 		req := <-actionCh
@@ -95,8 +107,10 @@ func TestToolkit_RequestActionRejected(t *testing.T) {
 }
 
 func TestToolkit_ShellReadAllowlisted(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
 	actionCh := make(chan ActionRequest, 1)
-	reg := NewToolkit(actionCh, "test-agent")
+	reg := NewToolkit(actionCh, "test-agent", store)
 
 	result, err := reg.Call(context.Background(), "shell_read", `{"cmd":"echo","args":["hello"]}`)
 	if err != nil {
@@ -109,11 +123,68 @@ func TestToolkit_ShellReadAllowlisted(t *testing.T) {
 }
 
 func TestToolkit_ShellReadBlocksDisallowed(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
 	actionCh := make(chan ActionRequest, 1)
-	reg := NewToolkit(actionCh, "test-agent")
+	reg := NewToolkit(actionCh, "test-agent", store)
 
 	_, err := reg.Call(context.Background(), "shell_read", `{"cmd":"rm","args":["-rf","/"]}`)
 	if err == nil {
 		t.Fatal("expected error for disallowed command")
+	}
+}
+
+func TestToolkit_NewToolsRegistered(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
+	actionCh := make(chan ActionRequest, 1)
+	reg := NewToolkit(actionCh, "test-session", store)
+	defs := reg.Definitions()
+	names := make(map[string]bool)
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	expected := []string{
+		"read_file", "shell_read", "request_action",
+		"state_query", "state_write",
+		"map_read", "map_write", "map_delete",
+		"program_list", "program_load", "program_detach",
+	}
+	for _, name := range expected {
+		if !names[name] {
+			t.Errorf("expected tool %q to be registered", name)
+		}
+	}
+}
+
+func TestToolkit_StateQuery(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
+	if err := store.SetPolicy("ip", "10.0.0.5", state.Policy{Rule: "block", Value: "true", Reason: "suspicious"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	actionCh := make(chan ActionRequest, 1)
+	reg := NewToolkit(actionCh, "test-session", store)
+	result, err := reg.Call(context.Background(), "state_query", `{"pattern":"policy:*"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	m, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("expected map, got %T", result)
+	}
+	if len(m) == 0 {
+		t.Fatal("expected at least one result")
+	}
+}
+
+func TestToolkit_MapReadStub(t *testing.T) {
+	store, _ := state.Open(":memory:")
+	defer func() { _ = store.Close() }()
+	actionCh := make(chan ActionRequest, 1)
+	reg := NewToolkit(actionCh, "test-session", store)
+	_, err := reg.Call(context.Background(), "map_read", `{"map":"connections"}`)
+	if err == nil {
+		t.Fatal("expected stub error")
 	}
 }

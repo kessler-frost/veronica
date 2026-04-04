@@ -205,6 +205,18 @@ func (s *Store) RecentEvents(limit int) ([]Event, error) {
 	return events, err
 }
 
+// QueryByPattern returns key-value pairs matching a buntdb pattern.
+func (s *Store) QueryByPattern(pattern string, limit int) (map[string]string, error) {
+	results := make(map[string]string)
+	err := s.db.View(func(tx *buntdb.Tx) error {
+		return tx.AscendKeys(pattern, func(key, val string) bool {
+			results[key] = val
+			return len(results) < limit
+		})
+	})
+	return results, err
+}
+
 // AgentContext builds a human/LLM-readable context string for an agent's activity.
 func (s *Store) AgentContext(agentID string) (string, error) {
 	meta, err := s.GetAgentMeta(agentID)

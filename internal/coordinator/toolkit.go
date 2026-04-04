@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/fimbulwinter/veronica/internal/state"
 	"github.com/fimbulwinter/veronica/internal/tool"
 )
 
@@ -35,10 +36,47 @@ type requestActionArgs struct {
 	Reason  string `json:"reason" desc:"Brief explanation of why this action is needed"`
 }
 
-// NewToolkit creates a tool.Registry with read-only tools and request_action.
-// The agentID identifies this agent in action requests.
+type stateQueryArgs struct {
+	Pattern string `json:"pattern" desc:"Key pattern to query (e.g. 'policy:*', 'event:*')"`
+	Limit   int    `json:"limit,omitempty" desc:"Max results to return (default 50)"`
+}
+
+type stateWriteArgs struct {
+	Key   string `json:"key" desc:"Key to write"`
+	Value string `json:"value" desc:"JSON value to store"`
+	TTL   int    `json:"ttl,omitempty" desc:"Time-to-live in seconds (0 = no expiry)"`
+}
+
+type mapReadArgs struct {
+	Map string `json:"map" desc:"eBPF map name"`
+	Key string `json:"key,omitempty" desc:"Specific key to read (omit to dump all)"`
+}
+
+type mapWriteArgs struct {
+	Map   string `json:"map" desc:"eBPF map name"`
+	Key   string `json:"key" desc:"Map key"`
+	Value string `json:"value" desc:"Map value"`
+}
+
+type mapDeleteArgs struct {
+	Map string `json:"map" desc:"eBPF map name"`
+	Key string `json:"key" desc:"Key to delete"`
+}
+
+type programListArgs struct{}
+
+type programLoadArgs struct {
+	Name string `json:"name" desc:"Program name to load and attach"`
+}
+
+type programDetachArgs struct {
+	Name string `json:"name" desc:"Program name to detach and unload"`
+}
+
+// NewToolkit creates a tool.Registry with read-only tools, state tools, and eBPF tool stubs.
+// The sessionID identifies this agent in action requests.
 // The actionCh is used to send action requests to the coordinator.
-func NewToolkit(actionCh chan<- ActionRequest, agentID string) *tool.Registry {
+func NewToolkit(actionCh chan<- ActionRequest, sessionID string, store *state.Store) *tool.Registry {
 	reg := tool.NewRegistry()
 
 	tool.Register(reg, "read_file", "Read a file's contents", func(ctx context.Context, args readFileArgs) (any, error) {
@@ -63,7 +101,7 @@ func NewToolkit(actionCh chan<- ActionRequest, agentID string) *tool.Registry {
 	tool.Register(reg, "request_action", "Request the coordinator to execute a shell command. Use this for any write/modify/install operation.", func(ctx context.Context, args requestActionArgs) (any, error) {
 		respCh := make(chan ActionResult, 1)
 		actionCh <- ActionRequest{
-			AgentID: agentID,
+			AgentID: sessionID,
 			Action: Action{
 				Type:     "shell_exec",
 				Resource: args.Reason,
@@ -84,6 +122,60 @@ func NewToolkit(actionCh chan<- ActionRequest, agentID string) *tool.Registry {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	})
+
+	tool.Register(reg, "state_query", "Query buntdb state by key pattern", func(ctx context.Context, args stateQueryArgs) (any, error) {
+		limit := args.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		return store.QueryByPattern(args.Pattern, limit)
+	})
+
+	tool.Register(reg, "state_write", "Write a key-value pair to buntdb state", func(ctx context.Context, args stateWriteArgs) (any, error) {
+		respCh := make(chan ActionResult, 1)
+		actionCh <- ActionRequest{
+			AgentID: sessionID,
+			Action: Action{
+				Type:     "state_write",
+				Resource: "state:" + args.Key,
+				Args:     fmt.Sprintf(`{"key":%q,"value":%q,"ttl":%d}`, args.Key, args.Value, args.TTL),
+			},
+			Response: respCh,
+		}
+		select {
+		case result := <-respCh:
+			if result.Error != nil {
+				return nil, result.Error
+			}
+			return result.Output, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+
+	tool.Register(reg, "map_read", "Read an eBPF map entry or dump entire map", func(ctx context.Context, args mapReadArgs) (any, error) {
+		return nil, fmt.Errorf("map_read not yet implemented — requires eBPF manager wiring")
+	})
+
+	tool.Register(reg, "map_write", "Write a value to an eBPF map entry", func(ctx context.Context, args mapWriteArgs) (any, error) {
+		return nil, fmt.Errorf("map_write not yet implemented — requires eBPF manager wiring")
+	})
+
+	tool.Register(reg, "map_delete", "Delete an entry from an eBPF map", func(ctx context.Context, args mapDeleteArgs) (any, error) {
+		return nil, fmt.Errorf("map_delete not yet implemented — requires eBPF manager wiring")
+	})
+
+	tool.Register(reg, "program_list", "List loaded eBPF programs", func(ctx context.Context, args programListArgs) (any, error) {
+		return nil, fmt.Errorf("program_list not yet implemented — requires eBPF manager wiring")
+	})
+
+	tool.Register(reg, "program_load", "Load and attach an eBPF program", func(ctx context.Context, args programLoadArgs) (any, error) {
+		return nil, fmt.Errorf("program_load not yet implemented — requires eBPF manager wiring")
+	})
+
+	tool.Register(reg, "program_detach", "Detach and unload an eBPF program", func(ctx context.Context, args programDetachArgs) (any, error) {
+		return nil, fmt.Errorf("program_detach not yet implemented — requires eBPF manager wiring")
 	})
 
 	return reg

@@ -12,7 +12,6 @@ import (
 
 	"github.com/fimbulwinter/veronica/internal/coordinator"
 	vebpf "github.com/fimbulwinter/veronica/internal/ebpf"
-	"github.com/fimbulwinter/veronica/internal/llm"
 	"github.com/fimbulwinter/veronica/internal/state"
 )
 
@@ -32,15 +31,13 @@ func main() {
 	}
 	defer store.Close()
 
-	client := llm.NewClient(llmURL, llmModel)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// TODO(Task 6): replace with real Router implementation
 	var coord *coordinator.Coordinator
-	coord = coordinator.New(client, store, coordinator.Config{
-		SystemPrompt: systemPrompt,
-		MaxTurns:     10,
+	coord = coordinator.New(&noopRouter{}, store, coordinator.Config{
+		MaxTurns: 10,
 		ActionExecutor: func(a coordinator.Action) (string, error) {
 			log.Printf("ACTION [%s]: %s", a.Resource, a.Args)
 
@@ -116,6 +113,12 @@ func main() {
 	cancel()
 }
 
+// noopRouter is a placeholder Router until Task 6 wires up the real implementation.
+type noopRouter struct{}
+
+func (r *noopRouter) RouteEvent(ctx context.Context, event coordinator.Event, category coordinator.EventCategory) {
+}
+
 // isDangerous returns true for commands that should never be executed.
 func isDangerous(cmd string) bool {
 	dangerousPatterns := []string{
@@ -180,9 +183,3 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
-
-const systemPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux operating system.
-You observe kernel events via eBPF and manage the system.
-You have read-only tools (read_file, shell_read) and can request actions via request_action.
-When you receive an event, analyze it and decide what action to take.
-Be concise in your reasoning. Focus on system health, security, and performance.`

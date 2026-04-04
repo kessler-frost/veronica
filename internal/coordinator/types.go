@@ -1,6 +1,14 @@
 package coordinator
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// Router dispatches events to host agents.
+type Router interface {
+	RouteEvent(ctx context.Context, event Event, category EventCategory)
+}
 
 // Event is an eBPF event received by the coordinator.
 type Event struct {
