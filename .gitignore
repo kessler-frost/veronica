@@ -1,7 +1,5 @@
 # Claude Code
-.claude/settings.*
-.claude/plugins/
-.claude/todos*
+.claude/
 
 # Playwright
 .playwright-cli/

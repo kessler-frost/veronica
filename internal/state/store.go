@@ -29,11 +29,11 @@ type LogEntry struct {
 
 // Policy is an active policy on a resource.
 type Policy struct {
-	Rule  string    `json:"rule"`
-	Value string    `json:"value"`
-	Reason string   `json:"reason"`
-	SetAt time.Time `json:"set_at"`
-	SetBy string    `json:"set_by,omitempty"`
+	Rule   string    `json:"rule"`
+	Value  string    `json:"value"`
+	Reason string    `json:"reason"`
+	SetAt  time.Time `json:"set_at"`
+	SetBy  string    `json:"set_by,omitempty"`
 }
 
 // Event is a recorded eBPF event.

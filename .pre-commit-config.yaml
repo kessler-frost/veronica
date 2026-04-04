@@ -1,0 +1,23 @@
+repos:
+  # Secret detection — prevent credentials from being committed
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+
+  # Go formatting, imports, vet, and build
+  - repo: https://github.com/TekWizely/pre-commit-golang
+    rev: v1.0.0-rc.1
+    hooks:
+      - id: go-fmt-repo
+      - id: go-imports-repo
+      - id: go-vet-repo-mod
+      - id: go-build-repo-mod
+      - id: go-mod-tidy
+
+  # golangci-lint — comprehensive Go linter aggregator
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.1.6
+    hooks:
+      - id: golangci-lint
