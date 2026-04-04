@@ -39,11 +39,13 @@ class BaseAgent(ABC):
         nats_url: str = "nats://localhost:4222",
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
+        llm_semaphore: asyncio.Semaphore | None = None,
     ):
         self.agent_id = agent_id
         self.nats_url = nats_url
         self._llm_base_url = llm_base_url
         self._llm_model = llm_model
+        self._llm_semaphore = llm_semaphore or asyncio.Semaphore(1)
         self._nc: NATSClient | None = None
         self._js = None
         self._event_buffer: list[dict] = []
@@ -281,9 +283,10 @@ class BaseAgent(ABC):
 
         logger.info("agent %s processing batch: %d events → %d unique actions", self.agent_id, len(events), len(unique_events))
 
-        # Single LLM call for the entire batch
-        agent = self._build_agno_agent(self.get_context_append())
-        response = await agent.arun(batch_context)
+        # Single LLM call — acquire semaphore to limit concurrent calls
+        async with self._llm_semaphore:
+            agent = self._build_agno_agent(self.get_context_append())
+            response = await agent.arun(batch_context)
 
         content = response.content if response else "no response"
         logger.info("[%s] response: %s", self.agent_id, str(content)[:200])

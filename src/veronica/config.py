@@ -15,3 +15,4 @@ class VeronicaConfig(BaseSettings):
     project_path: str = "/Users/fimbulwinter/dev/veronica"
     llm_base_url: str = "http://localhost:1234/v1"
     llm_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
+    max_concurrent_agents: int = 1

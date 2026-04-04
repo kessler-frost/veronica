@@ -25,12 +25,14 @@ class DynamicAgent(BaseAgent):
         context_append: str,
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
+        llm_semaphore: asyncio.Semaphore | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
             nats_url=nats_url,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
+            llm_semaphore=llm_semaphore,
         )
         self.subscribed_events = events
         self._context_append = context_append
@@ -47,6 +49,7 @@ class AgentRunner:
         self._nc = None
         self._tasks: dict[str, asyncio.Task] = {}
         self._agents: dict[str, BaseAgent] = {}
+        self._llm_semaphore = asyncio.Semaphore(cfg.max_concurrent_agents)
 
     async def run(self) -> None:
         self._nc = await nats.connect(self.cfg.nats_url)
@@ -97,6 +100,7 @@ class AgentRunner:
             context_append=config.get("context", ""),
             llm_base_url=self.cfg.llm_base_url,
             llm_model=self.cfg.llm_model,
+            llm_semaphore=self._llm_semaphore,
         )
         self._agents[agent_id] = agent
         self._tasks[agent_id] = asyncio.create_task(agent.run())
