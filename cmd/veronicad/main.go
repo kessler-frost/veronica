@@ -13,15 +13,16 @@ import (
 	"github.com/fimbulwinter/veronica/internal/coordinator"
 	vebpf "github.com/fimbulwinter/veronica/internal/ebpf"
 	"github.com/fimbulwinter/veronica/internal/state"
+	"github.com/fimbulwinter/veronica/internal/tool"
+	"github.com/fimbulwinter/veronica/internal/ws"
 )
 
 func main() {
-	llmURL := envOr("VERONICA_LLM_URL", "http://host.lima.internal:1234")
-	llmModel := envOr("VERONICA_LLM_MODEL", "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled")
+	wsAddr := envOr("VERONICA_WS_ADDR", ":9090")
 	stateDB := envOr("VERONICA_STATE_DB", "/var/veronica/state.db")
 
 	log.Printf("veronica starting")
-	log.Printf("  llm: %s (model: %s)", llmURL, llmModel)
+	log.Printf("  ws: %s", wsAddr)
 	log.Printf("  state: %s", stateDB)
 
 	os.MkdirAll("/var/veronica", 0755)
@@ -34,14 +35,22 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// TODO(Task 6): replace with real Router implementation
+	// Create coordinator first (need its action channel for toolkit)
 	var coord *coordinator.Coordinator
-	coord = coordinator.New(&noopRouter{}, store, coordinator.Config{
+
+	// Toolkit factory: creates a tool registry per session
+	toolkitFn := func(sessionID string) *tool.Registry {
+		return coordinator.NewToolkit(coord.ActionChannel(), sessionID, store)
+	}
+
+	// WebSocket server (implements coordinator.Router)
+	wsSrv := ws.NewServer(wsAddr, toolkitFn)
+
+	coord = coordinator.New(wsSrv, store, coordinator.Config{
 		MaxTurns: 10,
 		ActionExecutor: func(a coordinator.Action) (string, error) {
 			log.Printf("ACTION [%s]: %s", a.Resource, a.Args)
 
-			// Deny dangerous commands
 			if isDangerous(a.Args) {
 				log.Printf("ACTION DENIED (dangerous): %s", a.Args)
 				return "DENIED: command matches dangerous pattern", fmt.Errorf("dangerous command blocked")
@@ -52,16 +61,14 @@ func main() {
 			output := strings.TrimSpace(string(out))
 
 			if err != nil {
-				// If command not found, try to install it
 				if strings.Contains(output, "command not found") || strings.Contains(output, "No such file") {
-					tool := extractToolName(output)
-					if tool != "" {
-						log.Printf("ACTION: tool %q not found, attempting install...", tool)
-						installOut, installErr := installTool(ctx, tool)
+					toolName := extractToolName(output)
+					if toolName != "" {
+						log.Printf("ACTION: tool %q not found, attempting install...", toolName)
+						installOut, installErr := installTool(ctx, toolName)
 						if installErr != nil {
 							return output + "\ninstall attempt: " + installOut, err
 						}
-						// Retry original command
 						retryOut, retryErr := exec.CommandContext(ctx, "bash", "-c", a.Args).CombinedOutput()
 						if retryErr != nil {
 							return strings.TrimSpace(string(retryOut)), retryErr
@@ -83,6 +90,14 @@ func main() {
 		}
 	}()
 
+	// Start WebSocket server
+	go func() {
+		if err := wsSrv.Start(ctx); err != nil {
+			log.Printf("ws server stopped: %v", err)
+		}
+	}()
+
+	// Start eBPF
 	events := make(chan coordinator.Event, 256)
 	go func() {
 		for e := range events {
@@ -103,7 +118,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("veronica running. ctrl+c to stop.")
+	log.Printf("veronica running. ws=%s. ctrl+c to stop.", wsAddr)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -113,29 +128,14 @@ func main() {
 	cancel()
 }
 
-// noopRouter is a placeholder Router until Task 6 wires up the real implementation.
-type noopRouter struct{}
-
-func (r *noopRouter) RouteEvent(ctx context.Context, event coordinator.Event, category coordinator.EventCategory) {
-}
-
 // isDangerous returns true for commands that should never be executed.
 func isDangerous(cmd string) bool {
 	dangerousPatterns := []string{
-		"rm -rf /",
-		"rm -rf /*",
-		"mkfs",
-		"dd if=/dev/zero",
-		"dd if=/dev/urandom",
-		":(){ :|:& };:", // fork bomb
-		"> /dev/sda",
-		"chmod -R 777 /",
-		"chown -R",
-		"shutdown",
-		"reboot",
-		"init 0",
-		"halt",
-		"poweroff",
+		"rm -rf /", "rm -rf /*", "mkfs",
+		"dd if=/dev/zero", "dd if=/dev/urandom",
+		":(){ :|:& };:", "> /dev/sda",
+		"chmod -R 777 /", "chown -R",
+		"shutdown", "reboot", "init 0", "halt", "poweroff",
 	}
 	lower := strings.ToLower(cmd)
 	for _, pattern := range dangerousPatterns {
@@ -148,7 +148,6 @@ func isDangerous(cmd string) bool {
 
 // extractToolName tries to find which tool is missing from an error message.
 func extractToolName(errOutput string) string {
-	// "bash: line 1: uv: command not found" → "uv"
 	if idx := strings.Index(errOutput, ": command not found"); idx != -1 {
 		before := errOutput[:idx]
 		lastColon := strings.LastIndex(before, ": ")
@@ -160,19 +159,17 @@ func extractToolName(errOutput string) string {
 }
 
 // installTool attempts to install a missing tool.
-func installTool(ctx context.Context, tool string) (string, error) {
+func installTool(ctx context.Context, toolName string) (string, error) {
 	var installCmd string
-	switch tool {
+	switch toolName {
 	case "uv", "uvx":
 		installCmd = "curl -LsSf https://astral.sh/uv/install.sh | bash && ln -sf /root/.local/bin/uv /usr/local/bin/uv && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx"
 	case "bun", "bunx":
 		installCmd = "curl -fsSL https://bun.sh/install | bash && ln -sf /root/.bun/bin/bun /usr/local/bin/bun"
 	default:
-		// Try dnf (Fedora)
-		installCmd = "dnf install -y " + tool
+		installCmd = "dnf install -y " + toolName
 	}
-
-	log.Printf("ACTION: installing %s via: %s", tool, installCmd)
+	log.Printf("ACTION: installing %s via: %s", toolName, installCmd)
 	out, err := exec.CommandContext(ctx, "bash", "-c", installCmd).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
