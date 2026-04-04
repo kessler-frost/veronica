@@ -121,8 +121,7 @@ class BaseAgent(ABC):
             model=model,
             instructions=instructions,
             tools=[exec_command, enforce, transform, schedule, measure, kv_get, kv_put, kv_keys],
-            show_tool_calls=False,
-            markdown=False,
+            telemetry=False,
         )
 
     @abstractmethod
@@ -148,9 +147,12 @@ class BaseAgent(ABC):
 
         logger.info("agent %s connected to %s", self.agent_id, self.nats_url)
 
+        async def _on_msg(msg):
+            asyncio.create_task(self._handle_event(msg.subject, msg.data))
+
         for event_type in self.subscribed_events:
             subject = f"events.{event_type}"
-            await self._nc.subscribe(subject, cb=lambda msg: asyncio.create_task(self._handle_event(msg.subject, msg.data)))
+            await self._nc.subscribe(subject, cb=_on_msg)
             logger.info("agent %s subscribed to %s", self.agent_id, subject)
 
         stop = asyncio.Event()
