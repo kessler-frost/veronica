@@ -1,4 +1,4 @@
-"""Base agent — Agno-powered with NATS tool calling."""
+"""Base agent — Agno-powered with NATS tool calling and event debouncing."""
 
 from __future__ import annotations
 
@@ -18,11 +18,14 @@ BASE_SYSTEM_PROMPT = """You are Veronica, an eBPF intelligence layer embedded in
 You observe kernel events and can enforce policies, transform traffic,
 schedule processes, and measure performance — all at kernel speed via eBPF.
 
-You receive notifications when events matching your subscriptions occur.
-Check in-flight tasks to avoid duplicate work. Act decisively when needed.
+You receive batches of recent kernel events. Analyze them together to understand
+what the user is doing. Check in-flight tasks to avoid duplicate work.
+Act decisively when needed.
 
 If nothing needs action, respond with just: "no action needed"
 """
+
+DEBOUNCE_WINDOW = 2.0  # seconds to accumulate events before processing
 
 
 class BaseAgent(ABC):
@@ -43,6 +46,8 @@ class BaseAgent(ABC):
         self._llm_model = llm_model
         self._nc: NATSClient | None = None
         self._js = None
+        self._event_buffer: list[dict] = []
+        self._debounce_task: asyncio.Task | None = None
 
     async def _call_nats_tool(self, tool_name: str, payload: dict) -> dict:
         """Call a daemon tool via NATS request/reply."""
@@ -128,43 +133,117 @@ class BaseAgent(ABC):
     def get_context_append(self) -> str:
         """Return per-agent context to append to the system prompt."""
 
-    async def _handle_event(self, subject: str, raw_data: bytes) -> None:
-        """Handle an incoming event using Agno agent loop with task tracking."""
-        event_json = raw_data.decode("utf-8")
+    def _semantic_key(self, event: dict) -> str:
+        """Extract a semantic task key from an event — based on what's being acted on, not PID."""
+        data = event.get("data", {})
 
-        # Extract resource for task tracking
-        event_dict = msgspec.json.decode(raw_data, type=dict)
-        resource = event_dict.get("resource", "unknown")
-        task_key = f"{self.agent_id}.{resource}".replace(":", "-")
+        # For process events: use the command + working directory
+        comm = data.get("comm", "")
+        cmdline = data.get("cmdline", "")
+        cwd = data.get("cwd", "")
 
-        # Check if this resource is already being handled
-        existing = await self._kv_get("tasks", task_key)
-        if existing and existing.get("status") == "in_progress":
-            logger.debug("agent %s skipping %s — already in progress", self.agent_id, resource)
+        # Extract the meaningful path from the cmdline
+        # "mkdir /home/user/my-app" → "/home/user/my-app"
+        # "git clone https://... /home/user/repo" → "/home/user/repo"
+        parts = cmdline.split()
+        target_path = ""
+        for part in reversed(parts):
+            if part.startswith("/"):
+                target_path = part
+                break
+
+        if target_path:
+            return f"{self.agent_id}.path.{target_path}".replace(":", "-").replace("/", "_")
+
+        # For network events: use the IP + port
+        daddr = data.get("daddr", "")
+        dport = data.get("dport", "")
+        if daddr:
+            return f"{self.agent_id}.net.{daddr}-{dport}".replace(":", "-")
+
+        # For exit events: use the service name
+        if comm:
+            return f"{self.agent_id}.service.{comm}".replace(":", "-")
+
+        # Fallback: use the resource
+        resource = event.get("resource", "unknown")
+        return f"{self.agent_id}.{resource}".replace(":", "-").replace("/", "_")
+
+    async def _on_event(self, msg) -> None:
+        """Buffer incoming events and debounce — process as batch after quiet period."""
+        event = msgspec.json.decode(msg.data, type=dict)
+        event["_subject"] = msg.subject
+        event["_raw"] = msg.data.decode("utf-8")
+        self._event_buffer.append(event)
+
+        # Reset the debounce timer
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        self._debounce_task = asyncio.create_task(self._flush_after_delay())
+
+    async def _flush_after_delay(self) -> None:
+        """Wait for the debounce window, then process accumulated events."""
+        await asyncio.sleep(DEBOUNCE_WINDOW)
+        await self._process_batch()
+
+    async def _process_batch(self) -> None:
+        """Process a batch of debounced events as a single LLM call."""
+        events = self._event_buffer
+        self._event_buffer = []
+
+        if not events:
             return
 
-        logger.info("agent %s handling %s on %s", self.agent_id, subject, resource)
+        # Deduplicate by semantic key — only process events we're not already handling
+        unique_events: dict[str, list[dict]] = {}
+        for event in events:
+            key = self._semantic_key(event)
+            existing = await self._kv_get("tasks", key)
+            if existing and existing.get("status") == "in_progress":
+                logger.debug("agent %s skipping %s — already in progress", self.agent_id, key)
+                continue
+            unique_events.setdefault(key, []).append(event)
 
-        # Claim the task
-        await self._kv_put("tasks", task_key, {
-            "agent": self.agent_id,
-            "resource": resource,
-            "status": "in_progress",
-        })
+        if not unique_events:
+            logger.debug("agent %s: all %d events already handled", self.agent_id, len(events))
+            return
 
+        # Build a batch summary for the LLM
+        batch_lines = [f"Batch of {len(events)} eBPF events ({len(unique_events)} unique actions):"]
+        for key, group in unique_events.items():
+            first = group[0]
+            data = first.get("data", {})
+            batch_lines.append(
+                f"  [{first.get('_subject', '')}] {data.get('comm', '')} "
+                f"{data.get('cmdline', data.get('daddr', ''))} "
+                f"(x{len(group)} events)"
+            )
+
+        batch_context = "\n".join(batch_lines)
+
+        # Claim all unique tasks
+        for key in unique_events:
+            await self._kv_put("tasks", key, {
+                "agent": self.agent_id,
+                "status": "in_progress",
+            })
+
+        logger.info("agent %s processing batch: %d events → %d unique actions", self.agent_id, len(events), len(unique_events))
+
+        # Single LLM call for the entire batch
         agent = self._build_agno_agent(self.get_context_append())
-        response = await agent.arun(f"eBPF event on {subject}:\n{event_json}")
+        response = await agent.arun(batch_context)
 
         content = response.content if response else "no response"
         logger.info("[%s] response: %s", self.agent_id, str(content)[:200])
 
-        # Mark task done
-        await self._kv_put("tasks", task_key, {
-            "agent": self.agent_id,
-            "resource": resource,
-            "status": "done",
-            "result": str(content)[:500],
-        })
+        # Mark all tasks done
+        for key in unique_events:
+            await self._kv_put("tasks", key, {
+                "agent": self.agent_id,
+                "status": "done",
+                "result": str(content)[:500],
+            })
 
     async def run(self) -> None:
         """Connect to NATS and listen for events."""
@@ -173,12 +252,9 @@ class BaseAgent(ABC):
 
         logger.info("agent %s connected to %s", self.agent_id, self.nats_url)
 
-        async def _on_msg(msg):
-            asyncio.create_task(self._handle_event(msg.subject, msg.data))
-
         for event_type in self.subscribed_events:
             subject = f"events.{event_type}"
-            await self._nc.subscribe(subject, cb=_on_msg)
+            await self._nc.subscribe(subject, cb=self._on_event)
             logger.info("agent %s subscribed to %s", self.agent_id, subject)
 
         stop = asyncio.Event()
