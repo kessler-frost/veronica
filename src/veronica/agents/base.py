@@ -48,6 +48,7 @@ class BaseAgent(ABC):
         self._js = None
         self._event_buffer: list[dict] = []
         self._debounce_task: asyncio.Task | None = None
+        self._processing: bool = False
 
     async def _call_nats_tool(self, tool_name: str, payload: dict) -> dict:
         """Call a daemon tool via NATS request/reply."""
@@ -212,9 +213,13 @@ class BaseAgent(ABC):
 
         self._event_buffer.append(event)
 
-        # Cap buffer size to prevent unbounded growth
+        # Cap buffer size
         if len(self._event_buffer) > 20:
             self._event_buffer = self._event_buffer[-20:]
+
+        # Don't reset debounce timer if we're already processing a batch
+        if self._processing:
+            return
 
         # Reset the debounce timer
         if self._debounce_task and not self._debounce_task.done():
@@ -228,10 +233,12 @@ class BaseAgent(ABC):
 
     async def _process_batch(self) -> None:
         """Process a batch of debounced events as a single LLM call."""
+        self._processing = True
         events = self._event_buffer
         self._event_buffer = []
 
         if not events:
+            self._processing = False
             return
 
         # Deduplicate by semantic key — skip in_progress AND recently done tasks
@@ -288,6 +295,12 @@ class BaseAgent(ABC):
                 "status": "done",
                 "result": str(content)[:500],
             })
+
+        self._processing = False
+
+        # If events accumulated while we were processing, schedule another batch
+        if self._event_buffer:
+            self._debounce_task = asyncio.create_task(self._flush_after_delay())
 
     async def run(self) -> None:
         """Connect to NATS and listen for events."""
