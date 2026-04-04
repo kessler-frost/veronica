@@ -135,7 +135,7 @@ class BaseAgent(ABC):
         # Extract resource for task tracking
         event_dict = msgspec.json.decode(raw_data, type=dict)
         resource = event_dict.get("resource", "unknown")
-        task_key = f"{self.agent_id}.{resource}"
+        task_key = f"{self.agent_id}.{resource}".replace(":", "-")
 
         # Check if this resource is already being handled
         existing = await self._kv_get("tasks", task_key)
