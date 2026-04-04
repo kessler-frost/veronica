@@ -199,7 +199,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // readSubscribe reads the first message and expects a subscribe payload.
-func readSubscribe(ctx context.Context, conn *websocket.Conn) (*agentConn, error) {
+func (s *Server) readSubscribe(ctx context.Context, conn *websocket.Conn) (*agentConn, error) {
 	_, data, err := conn.Read(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
@@ -216,10 +216,6 @@ func readSubscribe(ctx context.Context, conn *websocket.Conn) (*agentConn, error
 		evSet[e] = true
 	}
 	return &agentConn{id: msg.AgentID, conn: conn, events: evSet}, nil
-}
-
-func (s *Server) readSubscribe(ctx context.Context, conn *websocket.Conn) (*agentConn, error) {
-	return readSubscribe(ctx, conn)
 }
 
 // readLoop reads messages from the agent and dispatches tool_call / session_done.
