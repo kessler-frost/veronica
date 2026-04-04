@@ -23,6 +23,8 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(vmCmd)
 
 	vmCmd.AddCommand(vmStartCmd)
@@ -180,6 +182,92 @@ var buildCmd = &cobra.Command{
 
 		fmt.Println("Restarting service...")
 		return vmShell("sudo", "systemctl", "restart", serviceName)
+	},
+}
+
+// --- run ---
+
+var runCmd = &cobra.Command{
+	Use:                "run -- [command...]",
+	Short:              "Run a command inside the VM (use -- before the command)",
+	Args:               cobra.MinimumNArgs(1),
+	DisableFlagParsing: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Strip leading "--" if present
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		if len(args) == 0 {
+			return fmt.Errorf("no command provided")
+		}
+		return vmShell(args...)
+	},
+}
+
+// --- setup ---
+
+const projectPath = "/Users/fimbulwinter/dev/veronica"
+
+var setupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "Full setup: generate vmlinux.h, compile eBPF, generate Go bindings, build daemon, install systemd service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		running, err := vmRunning()
+		if err != nil {
+			return err
+		}
+		if !running {
+			return fmt.Errorf("VM is not running — run `veronica vm start` first")
+		}
+
+		ebpfDir := projectPath + "/internal/ebpf/programs"
+
+		fmt.Println("1/5 Generating vmlinux.h...")
+		if err := vmShell("bash", "-c",
+			fmt.Sprintf("cd %s && bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h", ebpfDir),
+		); err != nil {
+			return fmt.Errorf("vmlinux.h generation failed: %w", err)
+		}
+
+		fmt.Println("2/5 Compiling eBPF programs...")
+		for _, prog := range []string{"process_exec", "file_open", "net_connect", "process_exit"} {
+			if err := vmShell("bash", "-c",
+				fmt.Sprintf("cd %s && clang -g -O2 -target bpf -D__TARGET_ARCH_arm64 -I. -c %s.c -o %s.o", ebpfDir, prog, prog),
+			); err != nil {
+				return fmt.Errorf("compile %s failed: %w", prog, err)
+			}
+			fmt.Printf("   %s.o OK\n", prog)
+		}
+
+		fmt.Println("3/5 Generating Go bindings (bpf2go)...")
+		if err := vmShell("bash", "-c",
+			fmt.Sprintf("cd %s && GOTOOLCHAIN=auto go generate ./internal/ebpf/bpf/", projectPath),
+		); err != nil {
+			return fmt.Errorf("bpf2go failed: %w", err)
+		}
+
+		fmt.Println("4/5 Building daemon...")
+		if err := vmShell("bash", "-c",
+			fmt.Sprintf("cd %s && GOTOOLCHAIN=auto sudo -E go build -o %s %s", projectPath, daemonBin, daemonPkg),
+		); err != nil {
+			return fmt.Errorf("build failed: %w", err)
+		}
+
+		fmt.Println("5/5 Installing systemd service...")
+		if err := vmShell("sudo", "cp",
+			projectPath+"/lima/veronica.service", "/etc/systemd/system/veronica.service",
+		); err != nil {
+			return fmt.Errorf("install service failed: %w", err)
+		}
+		if err := vmShell("sudo", "systemctl", "daemon-reload"); err != nil {
+			return fmt.Errorf("daemon-reload failed: %w", err)
+		}
+		if err := vmShell("sudo", "systemctl", "enable", serviceName); err != nil {
+			return fmt.Errorf("enable service failed: %w", err)
+		}
+
+		fmt.Println("Setup complete. Run `veronica start` to start the daemon.")
+		return nil
 	},
 }
 

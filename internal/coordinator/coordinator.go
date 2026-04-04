@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fimbulwinter/veronica/internal/agent"
@@ -36,6 +37,7 @@ type Coordinator struct {
 	reports      chan Report
 	inFlight     map[string]string
 	executorPIDs sync.Map
+	batchRunning atomic.Bool // prevents overlapping batch agents
 }
 
 // IsOurPID reports whether the given PID belongs to a command we spawned.
@@ -136,7 +138,18 @@ func (c *Coordinator) batchLoop(ctx context.Context) {
 			if len(events) == 0 {
 				continue
 			}
-			go c.spawnBatchAgent(ctx, events)
+			// Skip if a batch agent is already running — events stay in next batch
+			if !c.batchRunning.CompareAndSwap(false, true) {
+				// Put events back
+				for _, e := range events {
+					c.batch.Add(e)
+				}
+				continue
+			}
+			go func() {
+				defer c.batchRunning.Store(false)
+				c.spawnBatchAgent(ctx, events)
+			}()
 		}
 	}
 }
@@ -213,34 +226,47 @@ func (c *Coordinator) spawnBatchAgent(ctx context.Context, events []Event) {
 
 	toolkit := NewToolkit(c.actions, agentID)
 
-	// Build summary for LLM
-	var summary strings.Builder
-	typeCounts := make(map[string]int)
+	// Deduplicate and trim events — only show unique, interesting ones
+	seen := make(map[string]bool)
+	var unique []Event
 	for _, e := range events {
-		typeCounts[e.Type]++
+		key := commFromData(e.Data) + "|" + cmdlineFromData(e.Data)
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, e)
+		}
 	}
-	fmt.Fprintf(&summary, "Batch of %d eBPF events from the last %s:\n\n", len(events), c.batch.interval)
-	for t, count := range typeCounts {
-		fmt.Fprintf(&summary, "  %s: %d events\n", t, count)
+
+	// Build summary for LLM — keep it concise
+	var summary strings.Builder
+	fmt.Fprintf(&summary, "Batch: %d events (%d unique) from the last %s.\n\n", len(events), len(unique), c.batch.interval)
+	summary.WriteString("Unique events:\n")
+	// Cap at 20 unique events
+	limit := len(unique)
+	if limit > 20 {
+		limit = 20
 	}
-	summary.WriteString("\nEvents (newest last):\n")
-	// Show all events (up to 30)
-	start := 0
-	if len(events) > 30 {
-		start = len(events) - 30
-	}
-	for _, e := range events[start:] {
+	for _, e := range unique[:limit] {
 		comm := commFromData(e.Data)
 		cmdline := cmdlineFromData(e.Data)
+		cwd := cwdFromData(e.Data)
 		if cmdline == "" {
 			cmdline = comm
 		}
-		fmt.Fprintf(&summary, "  [%s] %s — %s\n", e.Type, e.Resource, cmdline)
+		cwdStr := ""
+		if cwd != "" {
+			cwdStr = " (cwd:" + cwd + ")"
+		}
+		fmt.Fprintf(&summary, "  [%s] %s — %s%s\n", e.Type, e.Resource, cmdline, cwdStr)
+	}
+	if len(unique) > 20 {
+		fmt.Fprintf(&summary, "  ... and %d more\n", len(unique)-20)
 	}
 
 	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
 		SystemPrompt: batchPrompt,
 		MaxTurns:     c.config.MaxTurns,
+		TurnTimeout:  120 * time.Second,
 	}, summary.String())
 
 	duration := time.Since(startTime)
@@ -354,6 +380,16 @@ func commFromData(data string) string {
 		return ""
 	}
 	return payload.Comm
+}
+
+func cwdFromData(data string) string {
+	var payload struct {
+		Cwd string `json:"cwd"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return ""
+	}
+	return payload.Cwd
 }
 
 func cmdlineFromData(data string) string {

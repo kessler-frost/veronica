@@ -15,11 +15,19 @@
 - **Shared state**: buntdb file mode, single AOF persistence
 - **Design specs**: `docs/superpowers/specs/2026-04-03-veronica-design.md`, `docs/superpowers/specs/2026-04-04-two-step-model-design.md`
 
-## Lima VM
+## CLI (use this, not raw limactl)
+- Build CLI: `go build -o /tmp/veronica ./cmd/cli/`
+- First time: `limactl create --name=veronica lima/veronica.yaml && /tmp/veronica vm start`
+- Start daemon: `/tmp/veronica start`
+- Stop daemon: `/tmp/veronica stop`
+- View status: `/tmp/veronica status`
+- Stream logs: `/tmp/veronica logs`
+- Build + deploy: `/tmp/veronica build`
+- SSH into VM: `/tmp/veronica vm ssh`
+- Stop VM: `/tmp/veronica vm stop`
+
+## Lima VM (internals)
 - Config: `lima/veronica.yaml`
-- Create: `limactl create --name=veronica lima/veronica.yaml`
-- Start: `limactl start veronica`
-- Shell: `limactl shell veronica`
 - Mount path inside VM: `/Users/fimbulwinter/dev/veronica` (virtiofs, writable)
 - LLM from VM: `http://host.lima.internal:1234`
 - Go in VM needs `GOTOOLCHAIN=auto` since Fedora ships Go 1.25 but go.mod requires 1.26
