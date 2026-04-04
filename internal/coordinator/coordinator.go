@@ -25,6 +25,7 @@ type Coordinator struct {
 	client   *llm.Client
 	store    *state.Store
 	config   Config
+	filter   *Filter
 	events   chan Event
 	actions  chan ActionRequest
 	reports  chan Report
@@ -40,6 +41,7 @@ func New(client *llm.Client, store *state.Store, cfg Config) *Coordinator {
 		client:   client,
 		store:    store,
 		config:   cfg,
+		filter:   NewFilter(10),
 		events:   make(chan Event, 64),
 		actions:  make(chan ActionRequest, 64),
 		reports:  make(chan Report, 256),
@@ -78,7 +80,13 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 				Data:      event.Data,
 				Timestamp: event.Timestamp,
 			})
-			go c.spawnAgent(ctx, event)
+			if c.filter.ShouldProcess(event) {
+				c.filter.AgentStarted()
+				go func() {
+					defer c.filter.AgentFinished()
+					c.spawnAgent(ctx, event)
+				}()
+			}
 		}
 	}
 }
