@@ -132,6 +132,8 @@ func NewClassifier() *Classifier {
 			"docker": true, "podman": true,
 			// Downloading
 			"curl": true, "wget": true,
+			// Key generation (ssh-keygen fires before ssh- prefix silences it)
+			"ssh-keygen": true,
 		},
 
 		ImmediateFiles: map[string]bool{
@@ -140,6 +142,13 @@ func NewClassifier() *Classifier {
 			"/etc/sudoers":               true,
 			"/etc/ssh/sshd_config":       true,
 			"/root/.ssh/authorized_keys": true,
+			// Config files
+			"/etc/nginx/nginx.conf":           true,
+			"/etc/nginx/conf.d":               true,
+			"/etc/apache2/apache2.conf":       true,
+			"/etc/postgresql/postgresql.conf": true,
+			"/etc/redis/redis.conf":           true,
+			"/etc/docker/daemon.json":         true,
 		},
 	}
 }

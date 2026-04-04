@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -31,17 +34,36 @@ func main() {
 
 	client := llm.NewClient(llmURL, llmModel)
 
-	coord := coordinator.New(client, store, coordinator.Config{
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var coord *coordinator.Coordinator
+	coord = coordinator.New(client, store, coordinator.Config{
 		SystemPrompt: systemPrompt,
 		MaxTurns:     10,
 		ActionExecutor: func(a coordinator.Action) (string, error) {
-			log.Printf("ACTION: %s on %s args=%s", a.Type, a.Resource, a.Args)
-			return "executed (stub)", nil
+			log.Printf("ACTION: %s on %s", a.Type, a.Resource)
+
+			switch a.Type {
+			case "shell_exec":
+				var shellArgs struct {
+					Cmd  string   `json:"cmd"`
+					Args []string `json:"args"`
+				}
+				if err := json.Unmarshal([]byte(a.Args), &shellArgs); err != nil {
+					return "", fmt.Errorf("parse shell_exec args: %w", err)
+				}
+				out, err := exec.CommandContext(ctx, shellArgs.Cmd, shellArgs.Args...).CombinedOutput()
+				if err != nil {
+					return fmt.Sprintf("error: %s\noutput: %s", err, string(out)), err
+				}
+				coord.TrackPID(0) // Note: we can't easily get child PID here, but the rate limiter helps
+				return string(out), nil
+			default:
+				return "", fmt.Errorf("unknown action type: %s", a.Type)
+			}
 		},
 	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	coord.Start(ctx)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -335,35 +336,71 @@ func randBytes() []byte {
 }
 
 func promptForImmediate(event Event) string {
-	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. You received a HIGH-PRIORITY event that needs immediate attention.
+	comm := commFromData(event.Data)
+	cmdline := cmdlineFromData(event.Data)
+	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. You received a HIGH-PRIORITY event.
 
-Analyze this event and take appropriate action. You have tools:
-- read_file: read any file
-- shell_read: run read-only commands (ls, ps, cat, etc.)
-- request_action: request the coordinator to execute a write/modify action
-
+Command: %s
+Full cmdline: %s
 Event type: %s
 Resource: %s
 
-Assess the security and operational implications. If action is needed, use request_action.
-Be concise. Focus on what matters.`, event.Type, event.Resource)
+Assess and act:
+- Sensitive file access (shadow, passwd, sudoers, SSH keys) → check if the access is legitimate, revert unauthorized changes
+- Service crash (process_exit with non-zero code) → read the error log, diagnose, fix if possible, restart
+- Dangerous permission changes (chmod 777 on sensitive files) → revert to safe permissions
+- Suspicious network connection → investigate the destination, block if unknown
+- Unknown binary from non-standard path → investigate what it is, check if it's malicious
+
+Use read_file and shell_read to investigate. Use request_action with type "shell_exec" to take action.
+Be decisive. Act first, log your reasoning.`, comm, cmdline, event.Type, event.Resource)
 }
 
 func promptForProactive(event Event) string {
 	comm := commFromData(event.Data)
-	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. The user just ran a command that might benefit from proactive assistance.
+	cmdline := cmdlineFromData(event.Data)
+	return fmt.Sprintf(`You are Veronica, an autonomous OS intelligence layer. The user just ran a command that may benefit from proactive assistance.
 
 Command: %s
+Full cmdline: %s
 Event type: %s
 Resource: %s
 
-Based on the command and its arguments, determine if you should set something up or prepare the environment. Examples:
-- mkdir with a project-like name → scaffold the project (use uv for Python, bun for JS, go mod init for Go)
-- git clone → check if dependencies need installing
-- docker run → suggest resource limits
+Analyze the command and its arguments. Take helpful action if appropriate:
 
-If the command is routine and needs no action, just respond with "No action needed."
-Use request_action to execute any setup commands.`, comm, event.Type, event.Resource)
+- mkdir with a project-like name → scaffold the project:
+  - Python-sounding name (api, flask, fastapi, django, cli, bot, scraper) → uv init, uv add appropriate packages, create main entry file
+  - JS/TS-sounding name (app, web, next, react, vue) → bun init, set up basic structure
+  - Go-sounding name (service, server, cmd) → go mod init, create main.go
+  - Generic → just create a README.md
+
+- git clone → after clone completes, check what's in the repo:
+  - pyproject.toml or requirements.txt → run uv sync or uv pip install -r requirements.txt
+  - package.json → run bun install
+  - go.mod → run go mod download
+  - .env.example → copy to .env
+
+- curl/wget downloading an archive (.tar.gz, .zip, .tgz) → extract after download completes
+
+- docker/podman run without --memory or --cpus → set reasonable defaults
+
+- uv/pip/npm/bun adding a package → note it in the log (future: security scan)
+
+- ssh-keygen with -t rsa → suggest ed25519 instead
+
+If the command is routine and needs no action, respond with just: "No action needed."
+Otherwise, use request_action with type "shell_exec" and args like: {"cmd":"bash","args":["-c","cd /path && uv init && uv add fastapi"]}
+`, comm, cmdline, event.Type, event.Resource)
+}
+
+func cmdlineFromData(data string) string {
+	var payload struct {
+		Cmdline string `json:"cmdline"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return ""
+	}
+	return payload.Cmdline
 }
 
 func promptForDigest() string {
