@@ -10,3 +10,6 @@ docs/architecture.html
 
 # Build artifacts
 /veronica
+/veronicad
+/veronicactl
+/cli
