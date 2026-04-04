@@ -91,7 +91,13 @@ def build():
     typer.echo("Building daemon...")
     _vm_shell("bash", "-c", f"cd {cfg.project_path} && GOTOOLCHAIN=auto sudo -E go build -o {cfg.daemon_install_path} {cfg.daemon_pkg}")
     typer.echo("Restarting service...")
-    _vm_shell("sudo", "systemctl", "restart", "veronica")
+    _vm_shell("sudo", "systemctl", "restart", "veronica", check=False)
+
+
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def run(ctx: typer.Context):
+    """Run a command inside the VM."""
+    _vm_shell(*ctx.args, check=False)
 
 
 @app.command()

@@ -51,8 +51,8 @@ class BaseAgent(ABC):
         return msgspec.json.decode(resp.data, type=dict)
 
     async def _kv_get(self, bucket: str, key: str) -> dict | None:
-        kv = await self._js.key_value(bucket)
         try:
+            kv = await self._js.key_value(bucket)
             entry = await kv.get(key)
             return msgspec.json.decode(entry.value, type=dict)
         except Exception:
@@ -63,8 +63,8 @@ class BaseAgent(ABC):
         await kv.put(key, msgspec.json.encode(value))
 
     async def _kv_keys(self, bucket: str) -> list[str]:
-        kv = await self._js.key_value(bucket)
         try:
+            kv = await self._js.key_value(bucket)
             return await kv.keys()
         except Exception:
             return []
@@ -101,17 +101,17 @@ class BaseAgent(ABC):
             return result.get("data", result.get("error", str(result)))
 
         async def kv_get(bucket: str, key: str) -> str:
-            """Read a value from shared state."""
+            """Read a value from shared state. Valid buckets: agents, tasks, policies, logs."""
             result = await self._kv_get(bucket, key)
             return str(result)
 
         async def kv_put(bucket: str, key: str, value: str) -> str:
-            """Write a value to shared state. Value should be a JSON string."""
+            """Write a value to shared state. Valid buckets: agents, tasks, policies, logs. Value should be a JSON string."""
             await self._kv_put(bucket, key, msgspec.json.decode(value.encode(), type=dict))
             return "ok"
 
         async def kv_keys(bucket: str) -> str:
-            """List all keys in a shared state bucket."""
+            """List all keys in a shared state bucket. Valid buckets: agents, tasks, policies, logs."""
             keys = await self._kv_keys(bucket)
             return str(keys)
 

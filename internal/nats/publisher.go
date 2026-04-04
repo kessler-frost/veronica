@@ -2,7 +2,11 @@ package nats
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,7 +40,48 @@ func NewPublisher(js jetstream.JetStream, cls *classifier.Classifier) *Publisher
 
 func (p *Publisher) IsOurPID(pid uint32) bool {
 	_, ok := p.executorPIDs.Load(pid)
-	return ok
+	if ok {
+		return true
+	}
+	// Check if parent is tracked (catches children of bash -c "command")
+	ppid := readPPID(pid)
+	if ppid > 0 {
+		_, ok = p.executorPIDs.Load(ppid)
+		if ok {
+			return true
+		}
+		// Check grandparent too (bash → sh → actual command)
+		gppid := readPPID(ppid)
+		if gppid > 0 {
+			_, ok = p.executorPIDs.Load(gppid)
+			return ok
+		}
+	}
+	return false
+}
+
+// readPPID reads the parent PID from /proc/{pid}/stat.
+func readPPID(pid uint32) uint32 {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0
+	}
+	// Format: pid (comm) state ppid ...
+	// comm can contain spaces/parens, so find the LAST ")" then parse fields after it
+	s := string(data)
+	i := strings.LastIndex(s, ")")
+	if i == -1 || i+2 >= len(s) {
+		return 0
+	}
+	fields := strings.Fields(s[i+2:])
+	if len(fields) < 2 {
+		return 0
+	}
+	ppid, err := strconv.ParseUint(fields[1], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(ppid)
 }
 
 func (p *Publisher) TrackPID(pid uint32)   { p.executorPIDs.Store(pid, true) }
