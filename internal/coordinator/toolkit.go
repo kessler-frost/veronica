@@ -27,9 +27,8 @@ type shellReadArgs struct {
 }
 
 type requestActionArgs struct {
-	Type     string `json:"type" desc:"Action type: shell_exec, write_file, kill, set_cgroup, write_map, etc."`
-	Resource string `json:"resource" desc:"Resource identifier: pid:N, file:/path, ip:addr, etc."`
-	Args     string `json:"args" desc:"JSON-encoded action-specific arguments"`
+	Command string `json:"command" desc:"Shell command to execute, e.g. 'cd /tmp/myapp && uv init && uv add fastapi'"`
+	Reason  string `json:"reason" desc:"Brief explanation of why this action is needed"`
 }
 
 // NewToolkit creates a tool.Registry with read-only tools and request_action.
@@ -57,14 +56,14 @@ func NewToolkit(actionCh chan<- ActionRequest, agentID string) *tool.Registry {
 		return string(out), nil
 	})
 
-	tool.Register(reg, "request_action", "Request the coordinator to execute a write/execute action", func(ctx context.Context, args requestActionArgs) (any, error) {
+	tool.Register(reg, "request_action", "Request the coordinator to execute a shell command. Use this for any write/modify/install operation.", func(ctx context.Context, args requestActionArgs) (any, error) {
 		respCh := make(chan ActionResult, 1)
 		actionCh <- ActionRequest{
 			AgentID: agentID,
 			Action: Action{
-				Type:     args.Type,
-				Resource: args.Resource,
-				Args:     args.Args,
+				Type:     "shell_exec",
+				Resource: args.Reason,
+				Args:     args.Command,
 			},
 			Response: respCh,
 		}

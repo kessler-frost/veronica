@@ -56,10 +56,13 @@ func TestToolkit_RequestActionSendsToChannel(t *testing.T) {
 		if req.Action.Type != "shell_exec" {
 			t.Errorf("expected shell_exec, got %s", req.Action.Type)
 		}
+		if req.Action.Args != "systemctl restart nginx" {
+			t.Errorf("expected command, got %s", req.Action.Args)
+		}
 		req.Response <- ActionResult{Approved: true, Output: "done"}
 	}()
 
-	result, err := reg.Call(context.Background(), "request_action", `{"type":"shell_exec","resource":"pid:123","args":"{\"cmd\":\"systemctl restart nginx\"}"}`)
+	result, err := reg.Call(context.Background(), "request_action", `{"command":"systemctl restart nginx","reason":"restart web server"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,7 +84,7 @@ func TestToolkit_RequestActionRejected(t *testing.T) {
 		req.Response <- ActionResult{Approved: false, Output: "conflicts with another agent"}
 	}()
 
-	result, err := reg.Call(context.Background(), "request_action", `{"type":"kill","resource":"pid:1","args":"{}"}`)
+	result, err := reg.Call(context.Background(), "request_action", `{"command":"kill -9 1","reason":"kill process"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

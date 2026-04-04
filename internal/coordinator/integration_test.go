@@ -46,7 +46,7 @@ func TestIntegration_FullEventLifecycle(t *testing.T) {
 						ID: "c2", Type: "function",
 						Function: llm.FunctionCall{
 							Name:      "request_action",
-							Arguments: `{"type":"set_cgroup","resource":"pid:4521","args":"{\"mem\":\"4G\"}"}`,
+							Arguments: `{"command":"cgset -r memory.max=4G /sys/fs/cgroup/system.slice/4521","reason":"limit memory for high-CPU nginx"}`,
 						},
 					}},
 				},
@@ -118,11 +118,8 @@ func TestIntegration_FullEventLifecycle(t *testing.T) {
 	// Verify the action was executed
 	select {
 	case a := <-executedActions:
-		if a.Type != "set_cgroup" {
-			t.Fatalf("expected set_cgroup, got %s", a.Type)
-		}
-		if a.Resource != "pid:4521" {
-			t.Fatalf("expected pid:4521, got %s", a.Resource)
+		if a.Type != "shell_exec" {
+			t.Fatalf("expected shell_exec, got %s", a.Type)
 		}
 	default:
 		t.Fatal("no action was executed")

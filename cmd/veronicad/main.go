@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/fimbulwinter/veronica/internal/coordinator"
@@ -42,26 +41,33 @@ func main() {
 		SystemPrompt: systemPrompt,
 		MaxTurns:     10,
 		ActionExecutor: func(a coordinator.Action) (string, error) {
-			log.Printf("ACTION: %s on %s", a.Type, a.Resource)
+			log.Printf("ACTION [%s]: %s", a.Resource, a.Args)
 
-			switch a.Type {
-			case "shell_exec":
-				var shellArgs struct {
-					Cmd  string   `json:"cmd"`
-					Args []string `json:"args"`
+			cmd := exec.CommandContext(ctx, "bash", "-c", a.Args)
+			out, err := cmd.CombinedOutput()
+			output := strings.TrimSpace(string(out))
+
+			if err != nil {
+				// If command not found, try to install it
+				if strings.Contains(output, "command not found") || strings.Contains(output, "No such file") {
+					tool := extractToolName(output)
+					if tool != "" {
+						log.Printf("ACTION: tool %q not found, attempting install...", tool)
+						installOut, installErr := installTool(ctx, tool)
+						if installErr != nil {
+							return output + "\ninstall attempt: " + installOut, err
+						}
+						// Retry original command
+						retryOut, retryErr := exec.CommandContext(ctx, "bash", "-c", a.Args).CombinedOutput()
+						if retryErr != nil {
+							return strings.TrimSpace(string(retryOut)), retryErr
+						}
+						return strings.TrimSpace(string(retryOut)), nil
+					}
 				}
-				if err := json.Unmarshal([]byte(a.Args), &shellArgs); err != nil {
-					return "", fmt.Errorf("parse shell_exec args: %w", err)
-				}
-				out, err := exec.CommandContext(ctx, shellArgs.Cmd, shellArgs.Args...).CombinedOutput()
-				if err != nil {
-					return fmt.Sprintf("error: %s\noutput: %s", err, string(out)), err
-				}
-				coord.TrackPID(0) // Note: we can't easily get child PID here, but the rate limiter helps
-				return string(out), nil
-			default:
-				return "", fmt.Errorf("unknown action type: %s", a.Type)
+				return output, err
 			}
+			return output, nil
 		},
 	})
 
@@ -101,6 +107,37 @@ func main() {
 
 	log.Printf("shutting down...")
 	cancel()
+}
+
+// extractToolName tries to find which tool is missing from an error message.
+func extractToolName(errOutput string) string {
+	// "bash: line 1: uv: command not found" → "uv"
+	if idx := strings.Index(errOutput, ": command not found"); idx != -1 {
+		before := errOutput[:idx]
+		lastColon := strings.LastIndex(before, ": ")
+		if lastColon != -1 {
+			return strings.TrimSpace(before[lastColon+2:])
+		}
+	}
+	return ""
+}
+
+// installTool attempts to install a missing tool.
+func installTool(ctx context.Context, tool string) (string, error) {
+	var installCmd string
+	switch tool {
+	case "uv", "uvx":
+		installCmd = "curl -LsSf https://astral.sh/uv/install.sh | bash && ln -sf $HOME/.local/bin/uv /usr/local/bin/uv && ln -sf $HOME/.local/bin/uvx /usr/local/bin/uvx"
+	case "bun", "bunx":
+		installCmd = "curl -fsSL https://bun.sh/install | bash && ln -sf $HOME/.bun/bin/bun /usr/local/bin/bun"
+	default:
+		// Try dnf (Fedora)
+		installCmd = "dnf install -y " + tool
+	}
+
+	log.Printf("ACTION: installing %s via: %s", tool, installCmd)
+	out, err := exec.CommandContext(ctx, "bash", "-c", installCmd).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 func envOr(key, fallback string) string {

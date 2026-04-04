@@ -352,7 +352,8 @@ Assess and act:
 - Suspicious network connection → investigate the destination, block if unknown
 - Unknown binary from non-standard path → investigate what it is, check if it's malicious
 
-Use read_file and shell_read to investigate. Use request_action with type "shell_exec" to take action.
+Use read_file and shell_read to investigate.
+Use request_action to execute commands: {"command": "the shell command to run", "reason": "why"}
 Be decisive. Act first, log your reasoning.`, comm, cmdline, event.Type, event.Resource)
 }
 
@@ -389,7 +390,8 @@ Analyze the command and its arguments. Take helpful action if appropriate:
 - ssh-keygen with -t rsa → suggest ed25519 instead
 
 If the command is routine and needs no action, respond with just: "No action needed."
-Otherwise, use request_action with type "shell_exec" and args like: {"cmd":"bash","args":["-c","cd /path && uv init && uv add fastapi"]}
+Otherwise, use request_action: {"command": "cd /path && uv init && uv add fastapi", "reason": "scaffold Python FastAPI project"}
+If a tool is not installed, don't worry — the system will auto-install it.
 `, comm, cmdline, event.Type, event.Resource)
 }
 
@@ -412,8 +414,8 @@ Analyze the summary and recent events. Look for:
 - Performance issues: resource-heavy processes, repeated crashes
 - Opportunities: things you could optimize or automate
 
-If everything looks normal, respond with "System nominal."
-If you spot something actionable, use request_action to address it.
+If everything looks normal, respond with just the text "System nominal." Do NOT use request_action for this.
+If you spot something actionable, use request_action: {"command": "the command", "reason": "why"}
 Be concise.`
 }
 
