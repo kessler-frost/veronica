@@ -127,9 +127,9 @@ func installTool(ctx context.Context, tool string) (string, error) {
 	var installCmd string
 	switch tool {
 	case "uv", "uvx":
-		installCmd = "curl -LsSf https://astral.sh/uv/install.sh | bash && ln -sf $HOME/.local/bin/uv /usr/local/bin/uv && ln -sf $HOME/.local/bin/uvx /usr/local/bin/uvx"
+		installCmd = "curl -LsSf https://astral.sh/uv/install.sh | bash && ln -sf /root/.local/bin/uv /usr/local/bin/uv && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx"
 	case "bun", "bunx":
-		installCmd = "curl -fsSL https://bun.sh/install | bash && ln -sf $HOME/.bun/bin/bun /usr/local/bin/bun"
+		installCmd = "curl -fsSL https://bun.sh/install | bash && ln -sf /root/.bun/bin/bun /usr/local/bin/bun"
 	default:
 		// Try dnf (Fedora)
 		installCmd = "dnf install -y " + tool
