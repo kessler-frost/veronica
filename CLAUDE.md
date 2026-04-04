@@ -5,14 +5,11 @@
 2. **Hybrid Model/Harness** — Claude Opus 4.6 (via Claude Code) for development. mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled (via LM Studio, localhost:1234, parallel inference) for runtime intelligence.
 3. **eBPF** — All six powers: observe, enforce, transform, schedule, measure, iterate. Dozens of probes across kprobes, tracepoints, XDP, TC, LSM, sched_ext, uprobes, perf_event.
 
-## Architecture (2-step model)
-- **Daemon** (Go, runs as root in Lima VM): eBPF manager, classifier, coordinator, WebSocket tool server. No LLM calls — pure event capture + tool execution.
-- **Host Agents** (Python, run on macOS host): connect to daemon via WebSocket, subscribe to event types, run LLM loops (any harness: Claude Agent SDK, LM Studio, OpenCode, etc.)
-- **Sessions**: daemon spawns a goroutine per event, creates a session, routes to subscribed agents (fan-out). Each session is a bidirectional tool-calling channel.
-- **eBPF as tool server**: daemon exposes structured eBPF operations as tools (map_read, map_write, map_delete, program_load, program_detach) — agents get typed access to kernel state, not shell commands.
-- **Why not SSH**: the daemon holds live eBPF map/program file descriptors via cilium/ebpf Go API. SSH can only reach bpftool (string-based, no context). The daemon IS the eBPF runtime — it translates high-level tool calls into kernel operations. Plus, the serial action queue prevents conflicting writes.
-- **Coordinator**: single goroutine, owns action queue, serializes all writes, resolves conflicts
-- **Shared state**: buntdb file mode, single AOF persistence
+## Architecture
+- **Daemon** (Go, runs as root in Lima VM): eBPF manager, classifier, embedded NATS server + JetStream. Publishes events to NATS subjects. Tool responders on NATS request/reply. All state in NATS KV.
+- **Host Agents** (Python, run on macOS host): connect to daemon via NATS, subscribe to event types, run LLM loops (any harness). Created from natural language via `veronica agent add`.
+- **NATS** replaces WebSocket + buntdb. Events stream (5min TTL), KV buckets for agents/tasks/policies/logs.
+- **Why not SSH**: daemon holds live eBPF map/program file descriptors. The daemon IS the eBPF runtime.
 - **Design specs**: `docs/superpowers/specs/2026-04-03-veronica-design.md`, `docs/superpowers/specs/2026-04-04-two-step-model-design.md`
 
 ## CLI (use this, not raw limactl)
@@ -44,8 +41,13 @@
 ## Build
 - Daemon: build in VM with `GOTOOLCHAIN=auto go build -o /tmp/veronica ./cmd/veronica/`
 - Run: `sudo /tmp/veronica` (needs root for eBPF)
-- Tests (non-eBPF): `go test ./internal/agent/ ./internal/llm/ ./internal/tool/ ./internal/state/ ./internal/coordinator/` — works on macOS
+- Tests (non-eBPF): `go test ./internal/event/ ./internal/classifier/ ./internal/nats/ -v` — works on macOS
 - Tests (eBPF): must run in VM
+
+## NATS
+- Embedded in daemon, port 4222
+- From host: `nats://localhost:4222` (forwarded via Lima port forwarding)
+- From VM: in-process connection
 
 ## LM Studio (Runtime LLM)
 - Model: `mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled` (Jackrong/MLX-Qwen3.5-35B-A3B-Claude-4.6-Opus-Reasoning-Distilled-4bit)
