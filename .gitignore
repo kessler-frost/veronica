@@ -1,0 +1,14 @@
+# Claude Code
+.claude/settings.*
+.claude/plugins/
+.claude/todos*
+
+# Playwright
+.playwright-cli/
+docs/.playwright-cli/
+
+# HTML diagram experiments
+docs/architecture.html
+
+# Build artifacts
+/veronica

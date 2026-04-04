@@ -5,6 +5,7 @@ go 1.26.1
 require github.com/tidwall/buntdb v1.3.2
 
 require (
+	github.com/cilium/ebpf v0.21.0 // indirect
 	github.com/tidwall/btree v1.4.2 // indirect
 	github.com/tidwall/gjson v1.14.3 // indirect
 	github.com/tidwall/grect v0.1.4 // indirect
@@ -12,4 +13,5 @@ require (
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/rtred v0.1.2 // indirect
 	github.com/tidwall/tinyqueue v0.1.1 // indirect
+	golang.org/x/sys v0.37.0 // indirect
 )

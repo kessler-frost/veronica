@@ -1,0 +1,29 @@
+images:
+  - location: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2"
+    arch: "aarch64"
+
+cpus: 4
+memory: "8GiB"
+disk: "30GiB"
+
+vmType: "vz"
+mountType: "virtiofs"
+
+mounts:
+  - location: "~/dev/veronica"
+    writable: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      dnf install -y \
+        clang llvm \
+        bpftool \
+        libbpf-devel \
+        kernel-devel \
+        kernel-headers \
+        golang \
+        git \
+        make

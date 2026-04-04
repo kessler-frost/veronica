@@ -2,17 +2,17 @@
 
 ## What It Is
 
-A single Go binary that runs as root inside a Lume Linux VM (Fedora 43, kernel 6.17). It uses eBPF to observe, enforce, transform, schedule, measure, and iterate on everything happening in the OS. LLM-powered goroutines decide what to do. All actions are serialized through a single action queue to prevent conflicts.
+A single Go binary that runs as root inside a Linux VM (Fedora 43, kernel 6.17). It uses eBPF to observe, enforce, transform, schedule, measure, and iterate on everything happening in the OS. LLM-powered goroutines decide what to do. All actions are serialized through a single action queue to prevent conflicts.
 
 ## System Layout
 
 ```
-MAC HOST
+HOST (macOS or Linux)
   LM Studio :1234  — Qwen 3.5-35B, parallel inference (--parallel N)
   Bubble Tea v2 TUI — observes all agent activity via WebSocket
-  Lume :7777        — VM lifecycle management
+  Lima              — VM lifecycle (macOS: Virtualization.framework, Linux: QEMU)
 
-LUME VM (Fedora 43, Kernel 6.17)
+LIMA VM (Fedora 43, Kernel 6.17)
   Veronica daemon   — single Go binary, root, does everything
 ```
 
@@ -218,10 +218,10 @@ No OpenAI client library. No agent framework. No JSON schema library. net/http +
 
 ## Build
 
-- Daemon: `go build` → single static binary, deployed into Lume VM
+- Daemon: `go build` → single static binary, deployed into Lima VM
 - eBPF programs: `clang -target bpf -O2` → .o files, embedded in Go binary via `go:embed`
 - TUI: `go build` → separate binary, runs on Mac host
-- VM image: Fedora 43 cloud image via Lume, daemon binary + config deployed via SSH
+- VM image: Fedora 43 cloud image via Lima (`limactl create`), daemon binary deployed via `limactl shell` or SSH
 
 ## What Is NOT In Scope
 
