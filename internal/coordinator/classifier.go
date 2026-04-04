@@ -142,16 +142,13 @@ func (c *Classifier) Classify(event Event) EventCategory {
 }
 
 func filenameFromData(data string) string {
-	idx := strings.Index(data, `"filename":"`)
-	if idx == -1 {
+	var payload struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		return ""
 	}
-	start := idx + len(`"filename":"`)
-	end := strings.Index(data[start:], `"`)
-	if end == -1 {
-		return ""
-	}
-	return data[start : start+end]
+	return payload.Filename
 }
 
 func pidFromData(data string) uint32 {

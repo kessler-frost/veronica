@@ -192,6 +192,17 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	delete(s.agents, ac.id)
+	// Close all sessions for this agent
+	for id, sess := range s.sessions {
+		if sess.agent == ac {
+			select {
+			case <-sess.done:
+			default:
+				close(sess.done)
+			}
+			delete(s.sessions, id)
+		}
+	}
 	s.mu.Unlock()
 
 	log.Printf("ws: agent %s disconnected", ac.id)
@@ -246,11 +257,7 @@ func (s *Server) readLoop(ctx context.Context, ac *agentConn) {
 			sess, ok := s.sessions[msg.Session]
 			s.mu.RUnlock()
 			if ok {
-				select {
-				case sess.incoming <- msg:
-				default:
-					log.Printf("ws: session %s incoming channel full, dropping tool_call", msg.Session)
-				}
+				sess.incoming <- msg
 			}
 
 		case "session_done":
@@ -335,7 +342,7 @@ func (s *Server) runSession(ctx context.Context, sess *session) {
 
 // sendEvent marshals an event message and sends it to the agent.
 func (s *Server) sendEvent(ctx context.Context, ac *agentConn, sessionID string, event coordinator.Event) {
-	raw, _ := json.Marshal(event.Data)
+	raw := json.RawMessage(event.Data)
 	msg := eventMsg{
 		Type:    "event",
 		Session: sessionID,

@@ -48,7 +48,7 @@ class BaseAgent(ABC):
         call_id = str(next(self._call_counter))
         msg = ToolCall(session=session, call_id=call_id, name=name, args=args)
 
-        future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._pending[call_id] = future
 
         await self._send(msg)
