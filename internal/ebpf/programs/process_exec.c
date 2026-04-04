@@ -26,6 +26,18 @@ int trace_exec(struct trace_event_raw_sched_process_exec *ctx)
     bpf_probe_read_str(&e->filename, sizeof(e->filename),
                        (void *)ctx + fname_off);
 
+    // Read argv from current process mm
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    unsigned long arg_start = 0, arg_end = 0;
+    BPF_CORE_READ_INTO(&arg_start, task, mm, arg_start);
+    BPF_CORE_READ_INTO(&arg_end, task, mm, arg_end);
+
+    unsigned long arg_len = arg_end - arg_start;
+    if (arg_len > MAX_ARGS_LEN)
+        arg_len = MAX_ARGS_LEN;
+    if (arg_len > 0)
+        bpf_probe_read_user(&e->args, arg_len, (void *)arg_start);
+
     bpf_ringbuf_submit(e, 0);
     return 0;
 }

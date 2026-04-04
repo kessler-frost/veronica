@@ -65,10 +65,14 @@ func NewClassifier() *Classifier {
 			"bash": true, "sh": true, "zsh": true, "dash": true,
 			// Pagers
 			"less": true, "more": true, "pager": true,
-			// System query tools that fire constantly
+			// System query tools
 			"journalctl": true, "systemctl": true,
 			"loginctl": true, "timedatectl": true,
 			"hostnamectl": true, "localectl": true,
+			// SSH session setup noise
+			"grepconf.sh": true, "tty": true, "locale": true,
+			"dircolors": true, "lesspipe.sh": true, "env": true,
+			"id": true, "hostname": true, "uname": true,
 		},
 
 		SilentPrefixes: []string{

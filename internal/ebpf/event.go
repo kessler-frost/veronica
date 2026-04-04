@@ -24,6 +24,29 @@ type EventHeader struct {
 type ProcessExecEvent struct {
 	Header   EventHeader
 	Filename [256]byte
+	Args     [256]byte
+}
+
+// ArgsString returns the args as a trimmed string.
+// Args are null-separated (like /proc/pid/cmdline), converted to spaces.
+func ArgsString(b [256]byte) string {
+	// Find the last non-null byte
+	end := 0
+	for i, c := range b {
+		if c != 0 {
+			end = i + 1
+		}
+	}
+	// Replace nulls with spaces
+	result := make([]byte, end)
+	for i := range end {
+		if b[i] == 0 {
+			result[i] = ' '
+		} else {
+			result[i] = b[i]
+		}
+	}
+	return string(result)
 }
 
 // FileOpenEvent is emitted when a file is opened.

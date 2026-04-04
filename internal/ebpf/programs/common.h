@@ -8,6 +8,7 @@
 
 #define MAX_COMM_LEN 64
 #define MAX_FILENAME_LEN 256
+#define MAX_ARGS_LEN 256
 
 #define EVENT_PROCESS_EXEC  1
 #define EVENT_FILE_OPEN     2
@@ -26,6 +27,7 @@ struct vr_event_header {
 struct vr_process_exec_event {
     struct vr_event_header hdr;
     char filename[MAX_FILENAME_LEN];
+    char args[MAX_ARGS_LEN];
 };
 
 struct vr_file_open_event {

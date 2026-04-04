@@ -156,10 +156,12 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 		Status: "active",
 	})
 
+	comm := commFromData(event.Data)
+	cmdline := cmdlineFromData(event.Data)
 	c.report(Report{
 		AgentID:   agentID,
 		EventType: "spawned",
-		Detail:    fmt.Sprintf("%s on %s", event.Type, event.Resource),
+		Detail:    fmt.Sprintf("%s comm=%s cmdline=%s", event.Resource, comm, cmdline),
 	})
 
 	toolkit := NewToolkit(c.actions, agentID)

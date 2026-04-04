@@ -130,11 +130,16 @@ func (m *Manager) parseEvent(data []byte) *coordinator.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
-		cmdline := readCmdline(e.Header.PID)
+		// Args captured in eBPF probe (reliable for short-lived processes)
+		args := ArgsString(e.Args)
+		if args == "" {
+			// Fall back to /proc if eBPF args are empty
+			args = readCmdline(e.Header.PID)
+		}
 		return &coordinator.Event{
 			Type:     "process_exec",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
-			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, cmdline),
+			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, args),
 		}
 
 	case EventProcessExit:
