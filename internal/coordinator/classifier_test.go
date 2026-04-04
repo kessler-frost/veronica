@@ -13,17 +13,7 @@ func TestClassifier_SelfIsSilent(t *testing.T) {
 	}
 }
 
-func TestClassifier_SystemDaemonIsSilent(t *testing.T) {
-	c := NewClassifier()
-	for _, comm := range []string{"bash", "systemctl", "journalctl"} {
-		event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `"}`}
-		if got := c.Classify(event); got != CategorySilent {
-			t.Fatalf("expected silent for %s, got %s", comm, got)
-		}
-	}
-}
-
-func TestClassifier_SystemPrefixIsSilent(t *testing.T) {
+func TestClassifier_DaemonPrefixIsSilent(t *testing.T) {
 	c := NewClassifier()
 	for _, comm := range []string{"systemd-resolved", "dbus-daemon", "lima-guestagent"} {
 		event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `"}`}
@@ -42,50 +32,61 @@ func TestClassifier_OurPIDIsSilent(t *testing.T) {
 	}
 }
 
-func TestClassifier_EverythingElseGoesToAgent(t *testing.T) {
+func TestClassifier_SensitivePathIsUrgent(t *testing.T) {
 	c := NewClassifier()
-	// User commands, services, tools — all go to agent. LLM decides.
-	for _, comm := range []string{"mkdir", "nginx", "git", "curl", "chmod", "docker", "python3", "node"} {
-		event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `"}`}
-		got := c.Classify(event)
-		if got == CategorySilent {
-			t.Fatalf("expected agent for %s, got silent", comm)
+	event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"chmod","cmdline":"chmod 777 /etc/shadow"}`}
+	if got := c.Classify(event); got != CategoryUrgent {
+		t.Fatalf("expected urgent for sensitive path, got %s", got)
+	}
+}
+
+func TestClassifier_ServiceCrashIsUrgent(t *testing.T) {
+	c := NewClassifier()
+	event := Event{Type: "process_exit", Resource: "pid:1", Data: `{"comm":"nginx","exit_code":1}`}
+	if got := c.Classify(event); got != CategoryUrgent {
+		t.Fatalf("expected urgent for service crash, got %s", got)
+	}
+}
+
+func TestClassifier_NonStandardPathIsUrgent(t *testing.T) {
+	c := NewClassifier()
+	event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"suspicious","filename":"/tmp/suspicious"}`}
+	if got := c.Classify(event); got != CategoryUrgent {
+		t.Fatalf("expected urgent for non-standard path, got %s", got)
+	}
+}
+
+func TestClassifier_NormalExitIsBatch(t *testing.T) {
+	c := NewClassifier()
+	event := Event{Type: "process_exit", Resource: "pid:1", Data: `{"comm":"nginx","exit_code":0}`}
+	if got := c.Classify(event); got != CategoryBatch {
+		t.Fatalf("expected batch for normal exit, got %s", got)
+	}
+}
+
+func TestClassifier_RegularCommandIsBatch(t *testing.T) {
+	c := NewClassifier()
+	for _, comm := range []string{"mkdir", "git", "curl", "python3", "ls", "cat"} {
+		event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `","filename":"/usr/bin/` + comm + `"}`}
+		if got := c.Classify(event); got != CategoryBatch {
+			t.Fatalf("expected batch for %s, got %s", comm, got)
 		}
 	}
 }
 
-func TestClassifier_RulesAreReconfigurable(t *testing.T) {
-	c := NewClassifier()
+func TestBatch_AddAndFlush(t *testing.T) {
+	b := NewBatch(5 * time.Second)
 
-	// bash is silent by default
-	event := Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"bash"}`}
-	if got := c.Classify(event); got != CategorySilent {
-		t.Fatalf("expected silent for bash, got %s", got)
-	}
+	b.Add(Event{Type: "process_exec", Resource: "pid:1"})
+	b.Add(Event{Type: "process_exec", Resource: "pid:2"})
+	b.Add(Event{Type: "net_connect", Resource: "ip:1.2.3.4:80"})
 
-	// Remove bash from silent
-	c.mu.Lock()
-	delete(c.SilentComms, "bash")
-	c.mu.Unlock()
-
-	if got := c.Classify(event); got == CategorySilent {
-		t.Fatalf("expected non-silent for bash after reconfig, got silent")
-	}
-}
-
-func TestDigest_AddAndFlush(t *testing.T) {
-	d := NewDigest(5 * time.Second)
-
-	d.Add(Event{Type: "process_exec", Resource: "pid:1"})
-	d.Add(Event{Type: "file_open", Resource: "file:/tmp/foo"})
-	d.Add(Event{Type: "net_connect", Resource: "ip:1.2.3.4:80"})
-
-	events := d.Flush()
+	events := b.Flush()
 	if len(events) != 3 {
 		t.Fatalf("expected 3 events, got %d", len(events))
 	}
 
-	events = d.Flush()
+	events = b.Flush()
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events after second flush, got %d", len(events))
 	}

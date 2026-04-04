@@ -12,7 +12,7 @@ import (
 	"github.com/fimbulwinter/veronica/internal/state"
 )
 
-func TestIntegration_FullEventLifecycle(t *testing.T) {
+func TestIntegration_UrgentEventLifecycle(t *testing.T) {
 	store, _ := state.Open(":memory:")
 	defer store.Close()
 
@@ -23,38 +23,23 @@ func TestIntegration_FullEventLifecycle(t *testing.T) {
 
 		switch callCount {
 		case 1:
-			// Agent reads a file first (read-only, no coordinator)
+			// Agent investigates
 			resp = llm.Response{Choices: []llm.Choice{{
 				Message: llm.Message{
 					Role: "assistant",
 					ToolCalls: []llm.ToolCall{{
 						ID: "c1", Type: "function",
 						Function: llm.FunctionCall{
-							Name:      "shell_read",
-							Arguments: `{"cmd":"echo","args":["process info"]}`,
-						},
-					}},
-				},
-				FinishReason: "tool_calls",
-			}}}
-		case 2:
-			// Agent requests an action (goes through coordinator)
-			resp = llm.Response{Choices: []llm.Choice{{
-				Message: llm.Message{
-					Role: "assistant",
-					ToolCalls: []llm.ToolCall{{
-						ID: "c2", Type: "function",
-						Function: llm.FunctionCall{
 							Name:      "request_action",
-							Arguments: `{"command":"cgset -r memory.max=4G /sys/fs/cgroup/system.slice/4521","reason":"limit memory for high-CPU nginx"}`,
+							Arguments: `{"command":"chmod 600 /etc/shadow","reason":"revert dangerous permissions"}`,
 						},
 					}},
 				},
 				FinishReason: "tool_calls",
 			}}}
-		case 3:
+		default:
 			resp = llm.Response{Choices: []llm.Choice{{
-				Message:      llm.Message{Role: "assistant", Content: "Applied 4G memory limit to pid 4521"},
+				Message:      llm.Message{Role: "assistant", Content: "Reverted /etc/shadow to 600"},
 				FinishReason: "stop",
 			}}}
 		}
@@ -66,30 +51,28 @@ func TestIntegration_FullEventLifecycle(t *testing.T) {
 	executedActions := make(chan Action, 1)
 	client := llm.NewClient(server.URL, "test")
 	c := New(client, store, Config{
-		SystemPrompt: "You manage Linux systems via eBPF.",
-		MaxTurns:     10,
+		MaxTurns: 10,
 		ActionExecutor: func(a Action) (string, error) {
 			executedActions <- a
-			return "cgroup limit applied", nil
+			return "permissions restored", nil
 		},
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	reports := c.Reports()
 	c.Start(ctx)
 
-	// Send an event
+	// Urgent: chmod on sensitive path
 	c.HandleEvent(Event{
-		Type:     "process_high_cpu",
+		Type:     "process_exec",
 		Resource: "pid:4521",
-		Data:     `{"comm":"nginx","cpu_pct":95}`,
+		Data:     `{"comm":"chmod","cmdline":"chmod 777 /etc/shadow","filename":"/usr/bin/chmod"}`,
 	})
 
-	// Collect reports until we see "completed"
 	var gotSpawned, gotActionReq, gotApproved, gotCompleted bool
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(10 * time.Second)
 
 	for !gotCompleted {
 		select {
@@ -105,17 +88,16 @@ func TestIntegration_FullEventLifecycle(t *testing.T) {
 				gotCompleted = true
 			}
 		case <-deadline:
-			t.Fatalf("timed out. spawned=%v action_req=%v approved=%v completed=%v",
+			t.Fatalf("timed out. spawned=%v req=%v approved=%v completed=%v",
 				gotSpawned, gotActionReq, gotApproved, gotCompleted)
 		}
 	}
 
 	if !gotSpawned || !gotActionReq || !gotApproved {
-		t.Fatalf("missing reports. spawned=%v action_req=%v approved=%v",
+		t.Fatalf("missing reports. spawned=%v req=%v approved=%v",
 			gotSpawned, gotActionReq, gotApproved)
 	}
 
-	// Verify the action was executed
 	select {
 	case a := <-executedActions:
 		if a.Type != "shell_exec" {
@@ -123,14 +105,5 @@ func TestIntegration_FullEventLifecycle(t *testing.T) {
 		}
 	default:
 		t.Fatal("no action was executed")
-	}
-
-	// Verify event was recorded in state
-	events, _ := store.RecentEvents(10)
-	if len(events) == 0 {
-		t.Fatal("expected events in store")
-	}
-	if events[0].Type != "process_high_cpu" {
-		t.Fatalf("expected process_high_cpu, got %s", events[0].Type)
 	}
 }

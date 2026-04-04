@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -42,6 +43,12 @@ func main() {
 		MaxTurns:     10,
 		ActionExecutor: func(a coordinator.Action) (string, error) {
 			log.Printf("ACTION [%s]: %s", a.Resource, a.Args)
+
+			// Deny dangerous commands
+			if isDangerous(a.Args) {
+				log.Printf("ACTION DENIED (dangerous): %s", a.Args)
+				return "DENIED: command matches dangerous pattern", fmt.Errorf("dangerous command blocked")
+			}
 
 			cmd := exec.CommandContext(ctx, "bash", "-c", a.Args)
 			out, err := cmd.CombinedOutput()
@@ -107,6 +114,33 @@ func main() {
 
 	log.Printf("shutting down...")
 	cancel()
+}
+
+// isDangerous returns true for commands that should never be executed.
+func isDangerous(cmd string) bool {
+	dangerousPatterns := []string{
+		"rm -rf /",
+		"rm -rf /*",
+		"mkfs",
+		"dd if=/dev/zero",
+		"dd if=/dev/urandom",
+		":(){ :|:& };:", // fork bomb
+		"> /dev/sda",
+		"chmod -R 777 /",
+		"chown -R",
+		"shutdown",
+		"reboot",
+		"init 0",
+		"halt",
+		"poweroff",
+	}
+	lower := strings.ToLower(cmd)
+	for _, pattern := range dangerousPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractToolName tries to find which tool is missing from an error message.

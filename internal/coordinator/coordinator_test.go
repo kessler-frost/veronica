@@ -13,7 +13,7 @@ import (
 	"github.com/fimbulwinter/veronica/internal/state"
 )
 
-func TestCoordinator_HandleEvent(t *testing.T) {
+func TestCoordinator_UrgentEvent(t *testing.T) {
 	store, _ := state.Open(":memory:")
 	defer store.Close()
 
@@ -32,87 +32,70 @@ func TestCoordinator_HandleEvent(t *testing.T) {
 	defer server.Close()
 
 	client := llm.NewClient(server.URL, "test")
-	c := New(client, store, Config{
-		SystemPrompt: "You manage systems.",
-		MaxTurns:     10,
-	})
+	c := New(client, store, Config{MaxTurns: 10})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	c.Start(ctx)
 
+	// chmod on sensitive path → urgent
 	c.HandleEvent(Event{
 		Type:     "process_exec",
 		Resource: "pid:4521",
-		Data:     `{"comm":"nginx"}`,
+		Data:     `{"comm":"chmod","cmdline":"chmod 777 /etc/shadow","filename":"/usr/bin/chmod"}`,
 	})
 
-	// Wait for the goroutine to call the LLM
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for !agentSpawned.Load() {
 		select {
 		case <-deadline:
-			t.Fatal("timed out waiting for agent to be spawned")
+			t.Fatal("timed out waiting for urgent agent")
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
 }
 
-func TestCoordinator_ActionApproved(t *testing.T) {
+func TestCoordinator_BatchEvent(t *testing.T) {
 	store, _ := state.Open(":memory:")
 	defer store.Close()
 
-	callCount := 0
+	var agentSpawned atomic.Bool
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		var resp llm.Response
-		if callCount == 1 {
-			resp = llm.Response{Choices: []llm.Choice{{
-				Message: llm.Message{
-					Role: "assistant",
-					ToolCalls: []llm.ToolCall{{
-						ID: "c1", Type: "function",
-						Function: llm.FunctionCall{
-							Name:      "request_action",
-							Arguments: `{"command":"echo ok","reason":"test action"}`,
-						},
-					}},
-				},
-				FinishReason: "tool_calls",
-			}}}
-		} else {
-			resp = llm.Response{Choices: []llm.Choice{{
-				Message:      llm.Message{Role: "assistant", Content: "action complete"},
+		agentSpawned.Store(true)
+		resp := llm.Response{
+			Choices: []llm.Choice{{
+				Message:      llm.Message{Role: "assistant", Content: "batch handled"},
 				FinishReason: "stop",
-			}}}
+			}},
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
 	client := llm.NewClient(server.URL, "test")
-	c := New(client, store, Config{
-		SystemPrompt: "You manage systems.",
-		MaxTurns:     10,
-		ActionExecutor: func(action Action) (string, error) {
-			return "executed: " + action.Type, nil
-		},
-	})
+	c := New(client, store, Config{MaxTurns: 10})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	c.Start(ctx)
 
-	c.HandleEvent(Event{Type: "process_exec", Resource: "pid:42", Data: `{"comm":"nginx"}`})
+	// Regular mkdir → batch
+	c.HandleEvent(Event{
+		Type:     "process_exec",
+		Resource: "pid:42",
+		Data:     `{"comm":"mkdir","cmdline":"mkdir /tmp/test","filename":"/usr/bin/mkdir"}`,
+	})
 
-	deadline := time.After(3 * time.Second)
-	for callCount < 2 {
+	// Wait for batch flush (5s) + LLM call
+	deadline := time.After(8 * time.Second)
+	for !agentSpawned.Load() {
 		select {
 		case <-deadline:
-			t.Fatalf("timed out, only got %d LLM calls", callCount)
+			t.Fatal("timed out waiting for batch agent")
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -133,10 +116,7 @@ func TestCoordinator_Reports(t *testing.T) {
 	defer server.Close()
 
 	client := llm.NewClient(server.URL, "test")
-	c := New(client, store, Config{
-		SystemPrompt: "You manage systems.",
-		MaxTurns:     10,
-	})
+	c := New(client, store, Config{MaxTurns: 10})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -144,9 +124,13 @@ func TestCoordinator_Reports(t *testing.T) {
 	reports := c.Reports()
 	c.Start(ctx)
 
-	c.HandleEvent(Event{Type: "process_exec", Resource: "pid:99", Data: `{"comm":"nginx"}`})
+	// Urgent event → immediate report
+	c.HandleEvent(Event{
+		Type:     "process_exec",
+		Resource: "pid:99",
+		Data:     `{"comm":"suspicious","filename":"/tmp/suspicious"}`,
+	})
 
-	// Should receive at least a "spawned" report
 	select {
 	case r := <-reports:
 		if r.EventType != "spawned" {

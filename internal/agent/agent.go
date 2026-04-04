@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/fimbulwinter/veronica/internal/llm"
 	"github.com/fimbulwinter/veronica/internal/tool"
@@ -15,6 +16,10 @@ func Run(ctx context.Context, client *llm.Client, reg *tool.Registry, cfg Config
 	if maxTurns <= 0 {
 		maxTurns = 10
 	}
+	turnTimeout := cfg.TurnTimeout
+	if turnTimeout <= 0 {
+		turnTimeout = 60 * time.Second
+	}
 
 	messages := []llm.Message{
 		{Role: "system", Content: cfg.SystemPrompt},
@@ -23,7 +28,9 @@ func Run(ctx context.Context, client *llm.Client, reg *tool.Registry, cfg Config
 	tools := reg.Definitions()
 
 	for turn := range maxTurns {
-		resp, err := client.Chat(ctx, messages, tools)
+		turnCtx, cancel := context.WithTimeout(ctx, turnTimeout)
+		resp, err := client.Chat(turnCtx, messages, tools)
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("turn %d: %w", turn+1, err)
 		}

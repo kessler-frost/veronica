@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 type Config struct {
 	SystemPrompt   string
 	MaxTurns       int
+	TurnTimeout    time.Duration // per-LLM-call timeout; default 30s
 	ActionExecutor func(Action) (string, error)
 }
 
@@ -28,8 +30,7 @@ type Coordinator struct {
 	store        *state.Store
 	config       Config
 	classifier   *Classifier
-	digest       *Digest
-	filter       *Filter
+	batch        *Batch
 	events       chan Event
 	actions      chan ActionRequest
 	reports      chan Report
@@ -58,14 +59,16 @@ func New(client *llm.Client, store *state.Store, cfg Config) *Coordinator {
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 10
 	}
+	if cfg.TurnTimeout <= 0 {
+		cfg.TurnTimeout = 30 * time.Second
+	}
 	c := &Coordinator{
 		client:     client,
 		store:      store,
 		config:     cfg,
 		classifier: NewClassifier(),
-		digest:     NewDigest(5 * time.Second),
-		filter:     NewFilter(10),
-		events:     make(chan Event, 64),
+		batch:      NewBatch(5 * time.Second),
+		events:     make(chan Event, 256),
 		actions:    make(chan ActionRequest, 64),
 		reports:    make(chan Report, 256),
 		inFlight:   make(map[string]string),
@@ -74,11 +77,11 @@ func New(client *llm.Client, store *state.Store, cfg Config) *Coordinator {
 	return c
 }
 
-// Start begins the coordinator's event processing, action queue, and digest loops.
+// Start begins the coordinator's event processing, action queue, and batch loops.
 func (c *Coordinator) Start(ctx context.Context) {
 	go c.eventLoop(ctx)
 	go c.actionLoop(ctx)
-	go c.digestLoop(ctx)
+	go c.batchLoop(ctx)
 }
 
 // HandleEvent sends an event to the coordinator for processing.
@@ -104,30 +107,24 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 
 			switch category {
 			case CategorySilent:
-				// nothing
-			case CategoryAgent:
+				// drop
+			case CategoryUrgent:
 				if err := c.store.RecordEvent(state.Event{
 					Type: event.Type, Resource: event.Resource,
 					Data: event.Data, Timestamp: event.Timestamp,
 				}); err != nil {
 					log.Printf("record event: %v", err)
 				}
-				if c.filter.ShouldProcess(event) {
-					c.filter.AgentStarted()
-					go func() {
-						defer c.filter.AgentFinished()
-						c.spawnAgent(ctx, event)
-					}()
-				}
-			case CategoryDigest:
-				c.digest.Add(event)
+				go c.spawnUrgentAgent(ctx, event)
+			case CategoryBatch:
+				c.batch.Add(event)
 			}
 		}
 	}
 }
 
-func (c *Coordinator) digestLoop(ctx context.Context) {
-	ticker := time.NewTicker(c.digest.interval)
+func (c *Coordinator) batchLoop(ctx context.Context) {
+	ticker := time.NewTicker(c.batch.interval)
 	defer ticker.Stop()
 
 	for {
@@ -135,25 +132,21 @@ func (c *Coordinator) digestLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			events := c.digest.Flush()
+			events := c.batch.Flush()
 			if len(events) == 0 {
 				continue
 			}
-			c.filter.AgentStarted()
-			go func() {
-				defer c.filter.AgentFinished()
-				c.spawnDigestAgent(ctx, events)
-			}()
+			go c.spawnBatchAgent(ctx, events)
 		}
 	}
 }
 
-func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
-	agentID := agentIDFor(event)
+func (c *Coordinator) spawnUrgentAgent(ctx context.Context, event Event) {
+	agentID := fmt.Sprintf("urgent-%s", hex.EncodeToString(randBytes()))
 	startTime := time.Now()
 
 	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
-		Task:   fmt.Sprintf("%s on %s", event.Type, event.Resource),
+		Task:   fmt.Sprintf("URGENT: %s on %s", event.Type, event.Resource),
 		Status: "active",
 	})
 
@@ -162,33 +155,29 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 	c.report(Report{
 		AgentID:   agentID,
 		EventType: "spawned",
-		Detail:    fmt.Sprintf("%s comm=%s cmdline=%s", event.Resource, comm, cmdline),
+		Detail:    fmt.Sprintf("URGENT %s comm=%s cmdline=%s", event.Resource, comm, cmdline),
 	})
 
 	toolkit := NewToolkit(c.actions, agentID)
-
-	userMsg := fmt.Sprintf("eBPF event: type=%s resource=%s data=%s", event.Type, event.Resource, event.Data)
+	userMsg := fmt.Sprintf("URGENT eBPF event: type=%s resource=%s data=%s", event.Type, event.Resource, event.Data)
 
 	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
-		SystemPrompt: agentPrompt,
+		SystemPrompt: urgentPrompt,
 		MaxTurns:     c.config.MaxTurns,
 	}, userMsg)
 
 	duration := time.Since(startTime)
-
 	if err != nil {
-		log.Printf("agent %s error after %s: %v", agentID, duration.Round(time.Second), err)
-		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
-			Action: "error", Result: err.Error(),
-		})
+		log.Printf("urgent agent %s error after %s: %v", agentID, duration.Round(time.Second), err)
 	} else {
-		log.Printf("agent %s done in %s (%d turns): %s", agentID, duration.Round(time.Second), result.Turns, truncate(result.Response, 100))
+		log.Printf("urgent agent %s done in %s (%d turns): %s", agentID, duration.Round(time.Second), result.Turns, truncate(result.Response, 100))
 		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
 			Action: "completed", Result: result.Response,
 		})
 	}
+
 	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
-		Task:   fmt.Sprintf("%s on %s", event.Type, event.Resource),
+		Task:   fmt.Sprintf("URGENT: %s on %s", event.Type, event.Resource),
 		Status: "done",
 	})
 
@@ -199,61 +188,80 @@ func (c *Coordinator) spawnAgent(ctx context.Context, event Event) {
 	})
 }
 
-func (c *Coordinator) spawnDigestAgent(ctx context.Context, events []Event) {
-	agentID := fmt.Sprintf("digest-%s", hex.EncodeToString(randBytes()))
+func (c *Coordinator) spawnBatchAgent(ctx context.Context, events []Event) {
+	agentID := fmt.Sprintf("batch-%s", hex.EncodeToString(randBytes()))
+	startTime := time.Now()
 
 	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
-		Task:   fmt.Sprintf("digest: %d events", len(events)),
+		Task:   fmt.Sprintf("batch: %d events", len(events)),
 		Status: "active",
 	})
 
 	c.report(Report{
 		AgentID:   agentID,
 		EventType: "spawned",
-		Detail:    fmt.Sprintf("digest: %d events", len(events)),
+		Detail:    fmt.Sprintf("batch: %d events", len(events)),
 	})
+
+	// Record non-trivial events to store
+	for _, e := range events {
+		_ = c.store.RecordEvent(state.Event{
+			Type: e.Type, Resource: e.Resource,
+			Data: e.Data, Timestamp: e.Timestamp,
+		})
+	}
 
 	toolkit := NewToolkit(c.actions, agentID)
 
+	// Build summary for LLM
+	var summary strings.Builder
 	typeCounts := make(map[string]int)
 	for _, e := range events {
 		typeCounts[e.Type]++
 	}
-	summary := fmt.Sprintf("Activity digest (%d events in last %s):\n", len(events), c.digest.interval)
+	fmt.Fprintf(&summary, "Batch of %d eBPF events from the last %s:\n\n", len(events), c.batch.interval)
 	for t, count := range typeCounts {
-		summary += fmt.Sprintf("  %s: %d events\n", t, count)
+		fmt.Fprintf(&summary, "  %s: %d events\n", t, count)
 	}
-	summary += "\nRecent events:\n"
-	start := len(events) - 10
-	if start < 0 {
-		start = 0
+	summary.WriteString("\nEvents (newest last):\n")
+	// Show all events (up to 30)
+	start := 0
+	if len(events) > 30 {
+		start = len(events) - 30
 	}
 	for _, e := range events[start:] {
-		summary += fmt.Sprintf("  [%s] %s: %s\n", e.Type, e.Resource, e.Data)
+		comm := commFromData(e.Data)
+		cmdline := cmdlineFromData(e.Data)
+		if cmdline == "" {
+			cmdline = comm
+		}
+		fmt.Fprintf(&summary, "  [%s] %s — %s\n", e.Type, e.Resource, cmdline)
 	}
 
 	result, err := agent.Run(ctx, c.client, toolkit, agent.Config{
-		SystemPrompt: digestPrompt,
+		SystemPrompt: batchPrompt,
 		MaxTurns:     c.config.MaxTurns,
-	}, summary)
+	}, summary.String())
 
+	duration := time.Since(startTime)
 	if err != nil {
-		log.Printf("digest agent %s error: %v", agentID, err)
+		log.Printf("batch agent %s error after %s: %v", agentID, duration.Round(time.Second), err)
 	} else {
+		log.Printf("batch agent %s done in %s (%d turns): %s", agentID, duration.Round(time.Second), result.Turns, truncate(result.Response, 150))
 		_ = c.store.AppendAgentLog(agentID, state.LogEntry{
-			Action: "digest", Result: result.Response,
+			Action: "batch", Result: result.Response,
 		})
 	}
 
 	_ = c.store.SetAgentMeta(agentID, state.AgentMeta{
-		Task:   fmt.Sprintf("digest: %d events", len(events)),
+		Task:   fmt.Sprintf("batch: %d events", len(events)),
 		Status: "done",
 	})
 
 	c.report(Report{
 		AgentID:   agentID,
 		EventType: "completed",
-		Detail:    fmt.Sprintf("digest: %d events processed", len(events)),
+		Detail:    fmt.Sprintf("batch: %d events, took %s", len(events), duration.Round(time.Second)),
 	})
 }
 
@@ -266,7 +274,7 @@ func (c *Coordinator) actionLoop(ctx context.Context) {
 			c.report(Report{
 				AgentID:   req.AgentID,
 				EventType: "action_requested",
-				Detail:    fmt.Sprintf("%s on %s", req.Action.Type, req.Action.Resource),
+				Detail:    fmt.Sprintf("%s: %s", req.Action.Resource, truncate(req.Action.Args, 80)),
 			})
 
 			if existingAgent, ok := c.inFlight[req.Action.Resource]; ok && existingAgent != req.AgentID {
@@ -303,7 +311,7 @@ func (c *Coordinator) actionLoop(ctx context.Context) {
 				c.report(Report{
 					AgentID:   req.AgentID,
 					EventType: "action_approved",
-					Detail:    output,
+					Detail:    truncate(output, 100),
 				})
 				_ = c.store.AppendAgentLog(req.AgentID, state.LogEntry{
 					Action: req.Action.Type,
@@ -325,11 +333,11 @@ func (c *Coordinator) report(r Report) {
 	}
 }
 
-func agentIDFor(event Event) string {
-	domain := event.Type
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%s-%s", domain, hex.EncodeToString(b))
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func randBytes() []byte {
@@ -338,11 +346,14 @@ func randBytes() []byte {
 	return b
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+func commFromData(data string) string {
+	var payload struct {
+		Comm string `json:"comm"`
 	}
-	return s[:n] + "..."
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return ""
+	}
+	return payload.Comm
 }
 
 func cmdlineFromData(data string) string {
@@ -355,38 +366,42 @@ func cmdlineFromData(data string) string {
 	return payload.Cmdline
 }
 
-// agentPrompt is the single generalized prompt for all event agents.
-// No hardcoded scenarios — the LLM decides what's interesting and what to do.
-const agentPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux operating system. You see everything happening via eBPF — every process, file access, network connection.
+// urgentPrompt is for immediate high-priority events (security, crashes).
+const urgentPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux OS. You received an URGENT event that needs immediate attention.
 
-You will receive a single eBPF event. Decide if it needs action.
+This event bypassed the normal batch queue because it matches a critical pattern:
+- Service crash (non-zero exit code)
+- Sensitive file access (shadow, passwd, sudoers, SSH keys)
+- Unknown binary from non-standard path
 
 You have three tools:
-- read_file: read any file on the system
-- shell_read: run read-only commands (ls, ps, cat, stat, df, ip, ss, etc.)
+- read_file: read any file
+- shell_read: run read-only commands (ls, ps, cat, stat, nginx -t, journalctl, etc.)
 - request_action: execute any shell command ({"command": "...", "reason": "..."})
 
-Guidelines:
-- If a user is creating something (directory, project, repo), help set it up.
-- If something looks dangerous or unusual, investigate and act.
-- If a service crashes, diagnose and fix it.
-- If a tool is missing, request_action will auto-install it.
-- For long-running commands (git clone, downloads), use shell_read to check if the operation completed and what was created before deciding what to do. For example: check if a cloned repo has pyproject.toml, package.json, go.mod, etc. and install dependencies accordingly.
-- If the event is routine and needs no action, respond with just: "No action needed."
+Investigate immediately and take corrective action if needed. Be decisive.`
 
-Be concise. Don't over-explain. Act or don't.`
+// batchPrompt is for periodic batch of events — the main workhorse.
+const batchPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux OS. You see everything happening via eBPF.
 
-// digestPrompt is for the periodic batch summary agent.
-const digestPrompt = `You are Veronica, an autonomous intelligence layer embedded in a Linux operating system. You are reviewing a batch of recent eBPF events.
+You will receive a batch of recent events (last 5 seconds). Most events are routine OS activity. Your job:
 
-Look for patterns that individual events wouldn't reveal:
-- Repeated failures or crashes
-- Unusual spikes in activity
-- Security anomalies
-- Opportunities to automate or optimize
+1. Scan ALL events in the batch
+2. Identify anything that needs action (project scaffolding, setup, optimization)
+3. Ignore routine events (ls, ps, system processes, etc.)
+4. Take action on interesting events
 
-You have three tools: read_file, shell_read, request_action.
+You have three tools:
+- read_file: read any file
+- shell_read: run read-only commands (ls, ps, cat, stat, find, grep, nginx -t, etc.)
+- request_action: execute any shell command ({"command": "...", "reason": "..."})
 
-If everything looks normal, respond with just: "System nominal."
-If you spot something actionable, use request_action: {"command": "...", "reason": "..."}
-Be concise.`
+Common actions:
+- User created a project directory → scaffold it (uv init for Python, go mod init for Go, etc.)
+- User cloned a repo → check for dependency files and install them
+- Service exited with error → investigate and fix
+- Download completed → extract if archive
+
+If nothing needs action, respond with just: "No action needed."
+If a tool is not installed, request_action will auto-install it.
+Be concise. Act or don't.`

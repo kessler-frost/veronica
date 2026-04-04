@@ -5,15 +5,15 @@
 2. **Hybrid Model/Harness** — Claude Opus 4.6 (via Claude Code) for development. mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled (via LM Studio, localhost:1234, parallel inference) for runtime intelligence.
 3. **eBPF** — All six powers: observe, enforce, transform, schedule, measure, iterate. Dozens of probes across kprobes, tracepoints, XDP, TC, LSM, sched_ext, uprobes, perf_event.
 
-## Architecture
-- **Single Go binary** running as root in a Lima Fedora 43 VM
-- **eBPF Manager**: loads C programs via cilium/ebpf, reads ring buffers, writes maps
-- **Coordinator**: single goroutine, owns action queue, serializes all writes, resolves conflicts via Qwen
-- **Conversation goroutines**: spawned per event, call Qwen directly (parallel), read-only locally, write via coordinator
-- **Shared state**: buntdb file mode, single AOF persistence, LLM reads via structured db queries
-- **Agent SDK**: custom ~300 LOC, tool-calling loop with Go generics, no external deps
-- **Observer**: basic CLI log output for now, TUI/dashboard later
-- **Design spec**: `docs/superpowers/specs/2026-04-03-veronica-design.md`
+## Architecture (2-step model)
+- **Daemon** (Go, runs as root in Lima VM): eBPF manager, classifier, coordinator, WebSocket tool server. No LLM calls — pure event capture + tool execution.
+- **Host Agents** (Python, run on macOS host): connect to daemon via WebSocket, subscribe to event types, run LLM loops (any harness: Claude Agent SDK, LM Studio, OpenCode, etc.)
+- **Sessions**: daemon spawns a goroutine per event, creates a session, routes to subscribed agents (fan-out). Each session is a bidirectional tool-calling channel.
+- **eBPF as tool server**: daemon exposes structured eBPF operations as tools (map_read, map_write, map_delete, program_load, program_detach) — agents get typed access to kernel state, not shell commands.
+- **Why not SSH**: the daemon holds live eBPF map/program file descriptors via cilium/ebpf Go API. SSH can only reach bpftool (string-based, no context). The daemon IS the eBPF runtime — it translates high-level tool calls into kernel operations. Plus, the serial action queue prevents conflicting writes.
+- **Coordinator**: single goroutine, owns action queue, serializes all writes, resolves conflicts
+- **Shared state**: buntdb file mode, single AOF persistence
+- **Design specs**: `docs/superpowers/specs/2026-04-03-veronica-design.md`, `docs/superpowers/specs/2026-04-04-two-step-model-design.md`
 
 ## Lima VM
 - Config: `lima/veronica.yaml`
