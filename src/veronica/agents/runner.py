@@ -76,10 +76,13 @@ class AgentRunner:
             agent_id = update.key
 
             # Handle deletion
-            if update.operation and update.operation.name in ("DEL", "PURGE"):
+            op = str(update.operation) if update.operation else ""
+            if "DEL" in op or "PURGE" in op:
                 await self._stop_agent(agent_id)
                 continue
 
+            if not update.value:
+                continue
             config = msgspec.json.decode(update.value, type=dict)
             if config.get("status") == "active" and agent_id not in self._tasks:
                 await self._spawn_agent(agent_id, config)
