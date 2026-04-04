@@ -173,8 +173,17 @@ class BaseAgent(ABC):
         """Buffer incoming events and debounce — process as batch after quiet period."""
         event = msgspec.json.decode(msg.data, type=dict)
         event["_subject"] = msg.subject
-        event["_raw"] = msg.data.decode("utf-8")
+
+        # Skip if we already have an event with the same semantic key in the buffer
+        key = self._semantic_key(event)
+        if any(self._semantic_key(e) == key for e in self._event_buffer):
+            return
+
         self._event_buffer.append(event)
+
+        # Cap buffer size to prevent unbounded growth
+        if len(self._event_buffer) > 20:
+            self._event_buffer = self._event_buffer[-20:]
 
         # Reset the debounce timer
         if self._debounce_task and not self._debounce_task.done():
@@ -194,19 +203,23 @@ class BaseAgent(ABC):
         if not events:
             return
 
-        # Deduplicate by semantic key — only process events we're not already handling
+        # Deduplicate by semantic key — skip in_progress AND recently done tasks
         unique_events: dict[str, list[dict]] = {}
         for event in events:
             key = self._semantic_key(event)
             existing = await self._kv_get("tasks", key)
-            if existing and existing.get("status") == "in_progress":
-                logger.debug("agent %s skipping %s — already in progress", self.agent_id, key)
+            if existing and existing.get("status") in ("in_progress", "done"):
                 continue
             unique_events.setdefault(key, []).append(event)
 
         if not unique_events:
-            logger.debug("agent %s: all %d events already handled", self.agent_id, len(events))
             return
+
+        # Cap batch size — take the most recent unique events
+        max_batch = 5
+        if len(unique_events) > max_batch:
+            keys = list(unique_events.keys())[-max_batch:]
+            unique_events = {k: unique_events[k] for k in keys}
 
         # Build a batch summary for the LLM
         batch_lines = [f"Batch of {len(events)} eBPF events ({len(unique_events)} unique actions):"]
