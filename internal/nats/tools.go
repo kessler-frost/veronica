@@ -253,15 +253,28 @@ func respond(msg *nats.Msg, result ToolResult) {
 }
 
 func isDangerous(cmd string) bool {
-	dangerousPatterns := []string{
-		"rm -rf /", "rm -rf /*", "mkfs",
-		"dd if=/dev/zero", "dd if=/dev/urandom",
+	lower := strings.ToLower(cmd)
+
+	// Exact root-destructive patterns (must not match subpaths like /tmp/foo)
+	rootDestructive := []string{
+		"rm -rf /\n", "rm -rf /;", "rm -rf / ", "rm -rf /\"", "rm -rf /'",
+		"rm -rf /*", "chmod -r 777 /\n", "chmod -r 777 / ", "chmod -r 777 /;",
+	}
+	// Append newline to catch end-of-command
+	padded := lower + "\n"
+	for _, pattern := range rootDestructive {
+		if strings.Contains(padded, pattern) {
+			return true
+		}
+	}
+
+	// Always dangerous regardless of path
+	alwaysDangerous := []string{
+		"mkfs", "dd if=/dev/zero", "dd if=/dev/urandom",
 		":(){ :|:& };:", "> /dev/sda",
-		"chmod -R 777 /", "chown -R",
 		"shutdown", "reboot", "init 0", "halt", "poweroff",
 	}
-	lower := strings.ToLower(cmd)
-	for _, pattern := range dangerousPatterns {
+	for _, pattern := range alwaysDangerous {
 		if strings.Contains(lower, pattern) {
 			return true
 		}
