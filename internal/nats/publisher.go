@@ -39,23 +39,19 @@ func NewPublisher(js jetstream.JetStream, cls *classifier.Classifier) *Publisher
 }
 
 func (p *Publisher) IsOurPID(pid uint32) bool {
-	_, ok := p.executorPIDs.Load(pid)
-	if ok {
-		return true
-	}
-	// Check if parent is tracked (catches children of bash -c "command")
-	ppid := readPPID(pid)
-	if ppid > 0 {
-		_, ok = p.executorPIDs.Load(ppid)
+	// Walk up the parent chain — if any ancestor is a tracked PID, suppress this event.
+	// Handles deep process trees: bash → uv → pip → git → ...
+	current := pid
+	for range 10 { // max 10 levels to avoid infinite loops
+		_, ok := p.executorPIDs.Load(current)
 		if ok {
 			return true
 		}
-		// Check grandparent too (bash → sh → actual command)
-		gppid := readPPID(ppid)
-		if gppid > 0 {
-			_, ok = p.executorPIDs.Load(gppid)
-			return ok
+		parent := readPPID(current)
+		if parent == 0 || parent == 1 || parent == current {
+			return false
 		}
+		current = parent
 	}
 	return false
 }

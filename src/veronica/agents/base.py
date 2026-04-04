@@ -129,16 +129,42 @@ class BaseAgent(ABC):
         """Return per-agent context to append to the system prompt."""
 
     async def _handle_event(self, subject: str, raw_data: bytes) -> None:
-        """Handle an incoming event using Agno agent loop."""
-        event_context = raw_data.decode("utf-8")
+        """Handle an incoming event using Agno agent loop with task tracking."""
+        event_json = raw_data.decode("utf-8")
 
-        logger.info("agent %s received %s", self.agent_id, subject)
+        # Extract resource for task tracking
+        event_dict = msgspec.json.decode(raw_data, type=dict)
+        resource = event_dict.get("resource", "unknown")
+        task_key = f"{self.agent_id}.{resource}"
+
+        # Check if this resource is already being handled
+        existing = await self._kv_get("tasks", task_key)
+        if existing and existing.get("status") == "in_progress":
+            logger.debug("agent %s skipping %s — already in progress", self.agent_id, resource)
+            return
+
+        logger.info("agent %s handling %s on %s", self.agent_id, subject, resource)
+
+        # Claim the task
+        await self._kv_put("tasks", task_key, {
+            "agent": self.agent_id,
+            "resource": resource,
+            "status": "in_progress",
+        })
 
         agent = self._build_agno_agent(self.get_context_append())
-        response = await agent.arun(f"eBPF event on {subject}:\n{event_context}")
+        response = await agent.arun(f"eBPF event on {subject}:\n{event_json}")
 
         content = response.content if response else "no response"
         logger.info("[%s] response: %s", self.agent_id, str(content)[:200])
+
+        # Mark task done
+        await self._kv_put("tasks", task_key, {
+            "agent": self.agent_id,
+            "resource": resource,
+            "status": "done",
+            "result": str(content)[:500],
+        })
 
     async def run(self) -> None:
         """Connect to NATS and listen for events."""
