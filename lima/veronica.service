@@ -1,0 +1,16 @@
+[Unit]
+Description=Veronica eBPF Intelligence Layer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/veronica
+Environment=VERONICA_LLM_URL=http://host.lima.internal:1234
+Environment=VERONICA_LLM_MODEL=mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled
+Environment=VERONICA_STATE_DB=/var/veronica/state.db
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
