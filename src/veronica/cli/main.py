@@ -117,7 +117,7 @@ def _veronica_already_running() -> bool:
 
 
 def _setup_opencode_config():
-    """Create ~/.veronica/.opencode/ with MCP config and main agent."""
+    """Create ~/.veronica/.opencode/ with MCP config and agents dir."""
     oc_dir = cfg.opencode_config_dir
     agents_dir = oc_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -177,13 +177,11 @@ def start():
     mcp_thread = threading.Thread(target=run_mcp_server, args=(cfg.mcp_port, cfg.nats_url), daemon=True)
     mcp_thread.start()
 
-    # Start OpenCode headless
+    # Start OpenCode headless with ~/.veronica as working directory
     typer.echo("Starting OpenCode server...")
-    env = os.environ.copy()
-    env["OPENCODE_DIR"] = str(cfg.opencode_config_dir)
     oc_proc = subprocess.Popen(
         ["opencode", "serve", "--port", str(cfg.opencode_port)],
-        env=env,
+        cwd=str(cfg.veronica_dir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -214,7 +212,7 @@ def start():
                 continue
 
             # Snapshot existing agent files
-            agents_dir = Path(".opencode/agents")
+            agents_dir = cfg.opencode_config_dir / "agents"
             agents_dir.mkdir(parents=True, exist_ok=True)
             existing_agents = {f.stem for f in agents_dir.glob("*.md")}
 
@@ -436,7 +434,7 @@ def rm(description: str = typer.Argument(help="Behavior text to remove (partial 
     subagents = data.get("subagents", {})
     for name, sa in list(subagents.items()):
         if sa.get("behavior") in matches:
-            agent_file = Path(f".opencode/agents/{name}.md")
+            agent_file = cfg.opencode_config_dir / "agents" / f"{name}.md"
             if agent_file.exists():
                 agent_file.unlink()
             del subagents[name]

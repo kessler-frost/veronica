@@ -18,7 +18,11 @@ class VeronicaConfig(BaseSettings):
     mcp_port: int = 4097
     opencode_provider: str = "openrouter"
     opencode_model: str = "openai/gpt-5.4-nano"
-    veronica_dir: Path = Path.home() / ".veronica"
+    home_dir: Path = Path.home()
+
+    @property
+    def veronica_dir(self) -> Path:
+        return self.home_dir / ".veronica"
 
     @property
     def opencode_url(self) -> str:

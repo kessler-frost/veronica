@@ -17,3 +17,13 @@ def test_defaults():
 def test_opencode_url():
     cfg = VeronicaConfig()
     assert cfg.opencode_url == "http://localhost:4096"
+
+
+def test_opencode_config_dir():
+    cfg = VeronicaConfig()
+    assert cfg.opencode_config_dir == Path.home() / ".veronica" / ".opencode"
+
+
+def test_behaviors_file():
+    cfg = VeronicaConfig()
+    assert cfg.behaviors_file == Path.home() / ".veronica" / "behaviors.json"
