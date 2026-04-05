@@ -1,7 +1,9 @@
+# SUPERSEDED — See `2026-04-05-single-agent-design.md`
+
 # Veronica NATS Agent Architecture
 
 **Date:** 2026-04-04
-**Status:** Approved
+**Status:** Superseded by single-agent architecture
 **Supersedes:** `2026-04-04-two-step-model-design.md` (WebSocket + buntdb approach)
 
 ## Overview

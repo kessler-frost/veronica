@@ -1,7 +1,7 @@
 [project]
 name = "veronica"
 version = "0.1.0"
-description = "Veronica host agents and CLI"
+description = "Proactive agents at the kernel level, powered by eBPF"
 requires-python = ">=3.12"
 dependencies = [
     "agno>=2.0",

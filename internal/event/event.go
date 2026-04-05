@@ -8,7 +8,7 @@ import (
 
 // Event is an eBPF event received from the kernel.
 type Event struct {
-	Type      string // "process_exec", "file_write", "net_connect", etc.
+	Type      string // "process_exec", "process_exit", "file_open", "net_connect"
 	Resource  string // "pid:4521", "file:/etc/shadow", "ip:185.x.x.x"
 	Data      string // raw JSON payload from eBPF
 	Timestamp time.Time

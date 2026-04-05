@@ -110,15 +110,14 @@ def start():
 
 @app.command()
 def stop():
-    """Stop agent runner and daemon service."""
-    # Kill any running veronica start processes (agent runners)
+    """Stop Veronica and daemon service."""
     result = subprocess.run(["pgrep", "-f", "veronica start"], capture_output=True, text=True)
     our_pid = os.getpid()
     for line in result.stdout.strip().splitlines():
         pid = int(line.strip())
         if pid != our_pid:
             os.kill(pid, 9)
-            typer.echo(f"Killed agent runner (pid {pid})")
+            typer.echo(f"Stopped Veronica (pid {pid})")
     typer.echo("Stopping daemon...")
     _vm_shell("sudo", "systemctl", "stop", "veronica")
 
