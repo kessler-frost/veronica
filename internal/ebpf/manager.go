@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	json "github.com/goccy/go-json"
+
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 
@@ -148,17 +150,19 @@ func (m *Manager) parseEvent(data []byte) *event.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
-		// Args captured in eBPF probe (reliable for short-lived processes)
 		args := ArgsString(e.Args)
 		if args == "" {
-			// Fall back to /proc if eBPF args are empty
 			args = readCmdline(e.Header.PID)
 		}
 		cwd := readCwd(e.Header.PID)
+		payload, _ := json.Marshal(map[string]any{
+			"comm": e.Header.CommString(), "filename": FilenameString(e.Filename),
+			"uid": e.Header.UID, "pid": e.Header.PID, "cmdline": args, "cwd": cwd,
+		})
 		return &event.Event{
 			Type:     "process_exec",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
-			Data:     fmt.Sprintf(`{"comm":%q,"filename":%q,"uid":%d,"cmdline":%q,"cwd":%q}`, e.Header.CommString(), FilenameString(e.Filename), e.Header.UID, args, cwd),
+			Data:     string(payload),
 		}
 
 	case EventProcessExit:
@@ -166,10 +170,14 @@ func (m *Manager) parseEvent(data []byte) *event.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
+		payload, _ := json.Marshal(map[string]any{
+			"comm": e.Header.CommString(), "pid": e.Header.PID,
+			"uid": e.Header.UID, "exit_code": e.ExitCode,
+		})
 		return &event.Event{
 			Type:     "process_exit",
 			Resource: fmt.Sprintf("pid:%d", e.Header.PID),
-			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"uid":%d,"exit_code":%d}`, e.Header.CommString(), e.Header.PID, e.Header.UID, e.ExitCode),
+			Data:     string(payload),
 		}
 
 	case EventFileOpen:
@@ -177,10 +185,14 @@ func (m *Manager) parseEvent(data []byte) *event.Event {
 		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
 			return nil
 		}
+		payload, _ := json.Marshal(map[string]any{
+			"comm": e.Header.CommString(), "pid": e.Header.PID,
+			"filename": FilenameString(e.Filename), "flags": e.Flags,
+		})
 		return &event.Event{
 			Type:     "file_open",
 			Resource: fmt.Sprintf("file:%s", FilenameString(e.Filename)),
-			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"filename":%q,"flags":%d}`, e.Header.CommString(), e.Header.PID, FilenameString(e.Filename), e.Flags),
+			Data:     string(payload),
 		}
 
 	case EventNetConnect:
@@ -189,10 +201,14 @@ func (m *Manager) parseEvent(data []byte) *event.Event {
 			return nil
 		}
 		ip := fmt.Sprintf("%d.%d.%d.%d", byte(e.DAddr), byte(e.DAddr>>8), byte(e.DAddr>>16), byte(e.DAddr>>24))
+		payload, _ := json.Marshal(map[string]any{
+			"comm": e.Header.CommString(), "pid": e.Header.PID,
+			"daddr": ip, "dport": e.DPort,
+		})
 		return &event.Event{
 			Type:     "net_connect",
 			Resource: fmt.Sprintf("ip:%s:%d", ip, e.DPort),
-			Data:     fmt.Sprintf(`{"comm":%q,"pid":%d,"daddr":%q,"dport":%d}`, e.Header.CommString(), e.Header.PID, ip, e.DPort),
+			Data:     string(payload),
 		}
 	}
 
