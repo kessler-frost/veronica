@@ -154,8 +154,8 @@ def build():
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def run(ctx: typer.Context):
-    """Run a command inside the VM."""
-    _vm_shell(*ctx.args, check=False)
+    """Run a command inside the VM as root."""
+    _vm_shell("sudo", *ctx.args, check=False)
 
 
 @app.command()
