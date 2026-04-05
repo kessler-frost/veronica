@@ -19,7 +19,7 @@ class VeronicaConfig(BaseSettings):
     daemon_pkg: str = "./cmd/veronicad/"
     daemon_install_path: str = "/usr/local/bin/veronicad"
     vm_project_path: str = "/home/fimbulwinter.linux/veronica"
-    llm_provider: str = "openrouter"  # "lmstudio" or "openrouter"
+    llm_provider: str = "lmstudio"  # "lmstudio" or "openrouter"
     llm_base_url: str = "http://localhost:1234/v1"
     llm_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
     openrouter_model: str = "openai/gpt-5.4-nano"

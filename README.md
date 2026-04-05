@@ -32,4 +32,4 @@ uv run veronica agent add "scaffold projects automatically based on directory cr
 uv run veronica start
 ```
 
-Requires: macOS (Apple Silicon) or Linux, [uv](https://docs.astral.sh/uv/), [Lima](https://lima-vm.io/), and an [OpenRouter](https://openrouter.ai/) API key (`OPENROUTER_API_KEY`).
+Requires: macOS (Apple Silicon) or Linux, [uv](https://docs.astral.sh/uv/), [Lima](https://lima-vm.io/), and [LM Studio](https://lmstudio.ai/) for local inference. For cloud models, set `VERONICA_LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`.
