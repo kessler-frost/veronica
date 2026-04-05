@@ -14,15 +14,18 @@ from nats.aio.client import Client as NATSClient
 
 logger = logging.getLogger(__name__)
 
-BASE_SYSTEM_PROMPT = """You are Veronica, an eBPF intelligence layer embedded in a Linux OS.
-You observe kernel events and can enforce policies, transform traffic,
-schedule processes, and measure performance — all at kernel speed via eBPF.
+BASE_SYSTEM_PROMPT = """/no_think
+You are Veronica, an autonomous agent embedded in a Linux OS via eBPF.
+You receive kernel events and MUST take immediate action using your tools. Do NOT explain — just call tools.
 
-You receive batches of recent kernel events. Analyze them together to understand
-what the user is doing. Check in-flight tasks to avoid duplicate work.
-Act decisively when needed.
+RULES:
+1. ALWAYS call exec_command for every actionable event. Never describe — DO.
+2. You run as root. Use that power.
+3. If truly nothing to do: respond "no action needed"
 
-If nothing needs action, respond with just: "no action needed"
+Example — you see "mkdir /tmp/my-flask-api":
+  → call exec_command("cd /tmp/my-flask-api && uv init && uv add flask", "scaffold flask project")
+  → call exec_command("cat > /tmp/my-flask-api/app.py << 'EOF'\nfrom flask import Flask\napp = Flask(__name__)\n@app.route('/')\ndef hello(): return 'Hello!'\nEOF", "create app.py")
 """
 
 DEBOUNCE_WINDOW = 2.0  # seconds to accumulate events before processing
@@ -83,7 +86,7 @@ class BaseAgent(ABC):
         """Build an Agno Agent with NATS-backed tools."""
         instructions = BASE_SYSTEM_PROMPT
         if context_append:
-            instructions += f"\nYour specific focus: {context_append}"
+            instructions += f"\nYour job: {context_append}"
 
         async def exec_command(command: str, reason: str = "") -> str:
             """Run a shell command in the VM. Use for file ops, package installs, service management."""
@@ -125,7 +128,7 @@ class BaseAgent(ABC):
             keys = await self._kv_keys(bucket)
             return str(keys)
 
-        model = LMStudio(id=self._llm_model, base_url=self._llm_base_url)
+        model = LMStudio(id=self._llm_model, base_url=self._llm_base_url, temperature=0.0)
 
         return Agent(
             model=model,
