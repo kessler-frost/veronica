@@ -34,26 +34,24 @@ func main() {
 	}
 	defer srv.Close()
 
-	cls := classifier.New()
-	pub := vnats.NewPublisher(srv.JS(), cls)
-
-	if err := vnats.RegisterToolResponders(srv.Conn(), pub); err != nil {
-		log.Fatalf("register tools: %v", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// eBPF → event channel → publisher → NATS
 	events := make(chan event.Event, 256)
-	go pub.Run(ctx, events)
-
 	ebpfMgr := vebpf.New(events)
 	if err := ebpfMgr.LoadAndAttach(); err != nil {
 		log.Fatalf("ebpf: %v", err)
 	}
 	defer ebpfMgr.Close()
 	log.Printf("ebpf probes attached")
+
+	cls := classifier.New()
+	pub := vnats.NewPublisher(srv.JS(), cls)
+
+	if err := vnats.RegisterToolResponders(srv.Conn(), pub, ebpfMgr.Maps()); err != nil {
+		log.Fatalf("register tools: %v", err)
+	}
 
 	go func() {
 		if err := ebpfMgr.ReadEvents(ctx); err != nil {

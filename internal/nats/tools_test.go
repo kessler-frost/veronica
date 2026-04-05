@@ -3,6 +3,7 @@ package nats
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,94 +211,6 @@ func TestBuildMeasureCmd_UnknownMetric(t *testing.T) {
 	}
 }
 
-func TestBuildMapReadCmd_DumpAll(t *testing.T) {
-	cmd, err := BuildMapReadCmd(MapReadRequest{Map: "vr_file_policy"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd != "bpftool map dump name vr_file_policy -j" {
-		t.Fatalf("unexpected cmd: %s", cmd)
-	}
-}
-
-func TestBuildMapReadCmd_KeyLookup(t *testing.T) {
-	cmd, err := BuildMapReadCmd(MapReadRequest{Map: "vr_net_policy", Key: "0a 00 00 01"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd != "bpftool map lookup name vr_net_policy key hex 0a 00 00 01" {
-		t.Fatalf("unexpected cmd: %s", cmd)
-	}
-}
-
-func TestBuildMapReadCmd_InvalidMapName(t *testing.T) {
-	_, err := BuildMapReadCmd(MapReadRequest{Map: "bad;name"})
-	if err == nil {
-		t.Fatal("expected error for invalid map name")
-	}
-}
-
-func TestBuildMapWriteCmd(t *testing.T) {
-	cmd, err := BuildMapWriteCmd(MapWriteRequest{Map: "vr_file_policy", Key: "01 02 03", Value: "01"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd != "bpftool map update name vr_file_policy key hex 01 02 03 value hex 01" {
-		t.Fatalf("unexpected cmd: %s", cmd)
-	}
-}
-
-func TestBuildMapWriteCmd_InvalidHex(t *testing.T) {
-	_, err := BuildMapWriteCmd(MapWriteRequest{Map: "vr_net_policy", Key: "zz", Value: "01"})
-	if err == nil {
-		t.Fatal("expected error for invalid hex")
-	}
-}
-
-func TestBuildMapDeleteCmd(t *testing.T) {
-	cmd, err := BuildMapDeleteCmd(MapDeleteRequest{Map: "vr_xdp_blocklist", Key: "0a 00 00 01"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd != "bpftool map delete name vr_xdp_blocklist key hex 0a 00 00 01" {
-		t.Fatalf("unexpected cmd: %s", cmd)
-	}
-}
-
-func TestBuildProgramLoadCmd(t *testing.T) {
-	cmd, err := BuildProgramLoadCmd(ProgramLoadRequest{Path: "/opt/ebpf/xdp_filter.o", Pin: "xdp_filter"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd != "bpftool prog load '/opt/ebpf/xdp_filter.o' /sys/fs/bpf/xdp_filter" {
-		t.Fatalf("unexpected cmd: %s", cmd)
-	}
-}
-
-func TestBuildProgramLoadCmd_InvalidPin(t *testing.T) {
-	_, err := BuildProgramLoadCmd(ProgramLoadRequest{Path: "/opt/ebpf/x.o", Pin: "bad/name"})
-	if err == nil {
-		t.Fatal("expected error for invalid pin name")
-	}
-}
-
-func TestBuildProgramDetachCmd(t *testing.T) {
-	cmd, err := BuildProgramDetachCmd(ProgramDetachRequest{Pin: "xdp_filter"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd != "rm -f /sys/fs/bpf/xdp_filter" {
-		t.Fatalf("unexpected cmd: %s", cmd)
-	}
-}
-
-func TestBuildProgramDetachCmd_InvalidPin(t *testing.T) {
-	_, err := BuildProgramDetachCmd(ProgramDetachRequest{Pin: "../../../etc/shadow"})
-	if err == nil {
-		t.Fatal("expected error for path traversal in pin name")
-	}
-}
-
 // --- NATS integration tests ---
 
 func newTestServer(t *testing.T) *Server {
@@ -309,7 +222,7 @@ func newTestServer(t *testing.T) *Server {
 	t.Cleanup(srv.Close)
 
 	pub := NewPublisher(srv.JS(), classifier.New())
-	if err := RegisterToolResponders(srv.Conn(), pub); err != nil {
+	if err := RegisterToolResponders(srv.Conn(), pub, nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	return srv
@@ -436,27 +349,38 @@ func TestToolMeasure_ValidationError(t *testing.T) {
 	}
 }
 
-func TestToolMapRead_ValidationError(t *testing.T) {
+func TestToolMapRead_NilMaps(t *testing.T) {
 	srv := newTestServer(t)
-	result := natsRequest(t, srv, "tools.map.read", MapReadRequest{Map: "bad;name"})
+	result := natsRequest(t, srv, "tools.map.read", MapReadRequest{Map: "vr_file_policy"})
 	if result.Ok {
-		t.Fatal("expected error for invalid map name")
+		t.Fatal("expected error for nil maps")
+	}
+	if !strings.Contains(result.Error, "not available") {
+		t.Fatalf("expected 'not available' error, got: %s", result.Error)
 	}
 }
 
-func TestToolMapWrite_ValidationError(t *testing.T) {
+func TestToolMapWrite_NilMaps(t *testing.T) {
 	srv := newTestServer(t)
-	result := natsRequest(t, srv, "tools.map.write", MapWriteRequest{Map: "ok_map", Key: "zz", Value: "01"})
+	result := natsRequest(t, srv, "tools.map.write", MapWriteRequest{Map: "vr_file_policy", Key: "01", Value: "01"})
 	if result.Ok {
-		t.Fatal("expected error for invalid hex")
+		t.Fatal("expected error for nil maps")
 	}
 }
 
-func TestToolMapDelete_ValidationError(t *testing.T) {
+func TestToolMapDelete_NilMaps(t *testing.T) {
 	srv := newTestServer(t)
-	result := natsRequest(t, srv, "tools.map.delete", MapDeleteRequest{Map: "ok_map", Key: "zz"})
+	result := natsRequest(t, srv, "tools.map.delete", MapDeleteRequest{Map: "vr_file_policy", Key: "01"})
 	if result.Ok {
-		t.Fatal("expected error for invalid hex")
+		t.Fatal("expected error for nil maps")
+	}
+}
+
+func TestToolProgramList_NilMaps(t *testing.T) {
+	srv := newTestServer(t)
+	result := natsRequest(t, srv, "tools.program.list", ProgramListRequest{})
+	if result.Ok {
+		t.Fatal("expected error for nil maps")
 	}
 }
 

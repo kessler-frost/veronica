@@ -17,6 +17,8 @@ import (
 	json "github.com/goccy/go-json"
 
 	"github.com/nats-io/nats.go"
+
+	vebpf "github.com/fimbulwinter/veronica/internal/ebpf"
 )
 
 // --- Request types ---
@@ -83,6 +85,16 @@ type ToolResult struct {
 	Ok    bool   `json:"ok"`
 	Data  string `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
+}
+
+// EBPFMaps provides access to loaded eBPF maps. Nil-safe — handlers
+// fall back to error responses when no maps are available.
+type EBPFMaps interface {
+	List() []string
+	Lookup(mapName string, key any, valueOut any) error
+	Put(mapName string, key any, value any) error
+	Delete(mapName string, key any) error
+	DumpAll(mapName string) ([]vebpf.MapEntry, error)
 }
 
 // --- Validation ---
@@ -297,64 +309,11 @@ func BuildMeasureCmd(req MeasureRequest) (string, error) {
 	}
 }
 
-func BuildMapReadCmd(req MapReadRequest) (string, error) {
-	if err := validateMapName(req.Map); err != nil {
-		return "", err
-	}
-	if req.Key == "" {
-		return fmt.Sprintf("bpftool map dump name %s -j", req.Map), nil
-	}
-	if err := validateHexKey(req.Key); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("bpftool map lookup name %s key hex %s", req.Map, req.Key), nil
-}
-
-func BuildMapWriteCmd(req MapWriteRequest) (string, error) {
-	if err := validateMapName(req.Map); err != nil {
-		return "", err
-	}
-	if err := validateHexKey(req.Key); err != nil {
-		return "", err
-	}
-	if err := validateHexKey(req.Value); err != nil {
-		return "", fmt.Errorf("invalid hex value: %w", err)
-	}
-	return fmt.Sprintf("bpftool map update name %s key hex %s value hex %s", req.Map, req.Key, req.Value), nil
-}
-
-func BuildMapDeleteCmd(req MapDeleteRequest) (string, error) {
-	if err := validateMapName(req.Map); err != nil {
-		return "", err
-	}
-	if err := validateHexKey(req.Key); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("bpftool map delete name %s key hex %s", req.Map, req.Key), nil
-}
-
-func BuildProgramLoadCmd(req ProgramLoadRequest) (string, error) {
-	if err := validatePath(req.Path); err != nil {
-		return "", err
-	}
-	if err := validatePinName(req.Pin); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("bpftool prog load %s /sys/fs/bpf/%s", shellQuote(req.Path), req.Pin), nil
-}
-
-func BuildProgramDetachCmd(req ProgramDetachRequest) (string, error) {
-	if err := validatePinName(req.Pin); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("rm -f /sys/fs/bpf/%s", req.Pin), nil
-}
-
 // --- Tool responder registration ---
 
 // RegisterToolResponders sets up NATS request/reply handlers for all daemon tools.
-// pub is used for PID tracking (so the classifier ignores commands we spawn).
-func RegisterToolResponders(nc *nats.Conn, pub *Publisher) error {
+// pub is used for PID tracking, maps provides direct eBPF map access (nil = map tools disabled).
+func RegisterToolResponders(nc *nats.Conn, pub *Publisher, maps EBPFMaps) error {
 	subs := []struct {
 		subject string
 		handler nats.MsgHandler
@@ -364,10 +323,10 @@ func RegisterToolResponders(nc *nats.Conn, pub *Publisher) error {
 		{"tools.transform", handleTransform(pub)},
 		{"tools.schedule", handleSchedule(pub)},
 		{"tools.measure", handleMeasure(pub)},
-		{"tools.map.read", handleMapRead(pub)},
-		{"tools.map.write", handleMapWrite(pub)},
-		{"tools.map.delete", handleMapDelete(pub)},
-		{"tools.program.list", handleProgramList(pub)},
+		{"tools.map.read", handleMapRead(maps)},
+		{"tools.map.write", handleMapWrite(maps)},
+		{"tools.map.delete", handleMapDelete(maps)},
+		{"tools.program.list", handleProgramList(maps)},
 		{"tools.program.load", handleProgramLoad(pub)},
 		{"tools.program.detach", handleProgramDetach(pub)},
 	}
@@ -502,7 +461,7 @@ func handleMeasure(pub *Publisher) nats.MsgHandler {
 	}
 }
 
-func handleMapRead(pub *Publisher) nats.MsgHandler {
+func handleMapRead(maps EBPFMaps) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		var req MapReadRequest
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
@@ -511,22 +470,48 @@ func handleMapRead(pub *Publisher) nats.MsgHandler {
 		}
 		log.Printf("TOOL map.read: map=%s key=%q", req.Map, req.Key)
 
-		cmd, err := BuildMapReadCmd(req)
-		if err != nil {
+		if maps == nil {
+			respond(msg, ToolResult{Ok: false, Error: "eBPF maps not available"})
+			return
+		}
+		if err := validateMapName(req.Map); err != nil {
 			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
 
-		output, err := runTracked(context.Background(), cmd, pub)
-		if err != nil {
-			respond(msg, ToolResult{Ok: false, Error: output})
+		if req.Key == "" {
+			entries, err := maps.DumpAll(req.Map)
+			if err != nil {
+				respond(msg, ToolResult{Ok: false, Error: err.Error()})
+				return
+			}
+			result := make([]map[string]string, 0, len(entries))
+			for _, e := range entries {
+				result = append(result, map[string]string{
+					"key":   hex.EncodeToString(e.Key),
+					"value": hex.EncodeToString(e.Value),
+				})
+			}
+			data, _ := json.Marshal(result)
+			respond(msg, ToolResult{Ok: true, Data: string(data)})
 			return
 		}
-		respond(msg, ToolResult{Ok: true, Data: output})
+
+		if err := validateHexKey(req.Key); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+		key, _ := hex.DecodeString(strings.ReplaceAll(req.Key, " ", ""))
+		var value []byte
+		if err := maps.Lookup(req.Map, key, &value); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: hex.EncodeToString(value)})
 	}
 }
 
-func handleMapWrite(pub *Publisher) nats.MsgHandler {
+func handleMapWrite(maps EBPFMaps) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		var req MapWriteRequest
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
@@ -535,22 +520,34 @@ func handleMapWrite(pub *Publisher) nats.MsgHandler {
 		}
 		log.Printf("TOOL map.write: map=%s key=%q value=%q", req.Map, req.Key, req.Value)
 
-		cmd, err := BuildMapWriteCmd(req)
-		if err != nil {
+		if maps == nil {
+			respond(msg, ToolResult{Ok: false, Error: "eBPF maps not available"})
+			return
+		}
+		if err := validateMapName(req.Map); err != nil {
 			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
+		if err := validateHexKey(req.Key); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+		if err := validateHexKey(req.Value); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Errorf("invalid hex value: %w", err).Error()})
+			return
+		}
 
-		output, err := runTracked(context.Background(), cmd, pub)
-		if err != nil {
-			respond(msg, ToolResult{Ok: false, Error: output})
+		key, _ := hex.DecodeString(strings.ReplaceAll(req.Key, " ", ""))
+		value, _ := hex.DecodeString(strings.ReplaceAll(req.Value, " ", ""))
+		if err := maps.Put(req.Map, key, value); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
 		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map write %s[%s]", req.Map, req.Key)})
 	}
 }
 
-func handleMapDelete(pub *Publisher) nats.MsgHandler {
+func handleMapDelete(maps EBPFMaps) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		var req MapDeleteRequest
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
@@ -559,31 +556,39 @@ func handleMapDelete(pub *Publisher) nats.MsgHandler {
 		}
 		log.Printf("TOOL map.delete: map=%s key=%q", req.Map, req.Key)
 
-		cmd, err := BuildMapDeleteCmd(req)
-		if err != nil {
+		if maps == nil {
+			respond(msg, ToolResult{Ok: false, Error: "eBPF maps not available"})
+			return
+		}
+		if err := validateMapName(req.Map); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+		if err := validateHexKey(req.Key); err != nil {
 			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
 
-		output, err := runTracked(context.Background(), cmd, pub)
-		if err != nil {
-			respond(msg, ToolResult{Ok: false, Error: output})
+		key, _ := hex.DecodeString(strings.ReplaceAll(req.Key, " ", ""))
+		if err := maps.Delete(req.Map, key); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
 		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map delete %s[%s]", req.Map, req.Key)})
 	}
 }
 
-func handleProgramList(pub *Publisher) nats.MsgHandler {
+func handleProgramList(maps EBPFMaps) nats.MsgHandler {
 	return func(msg *nats.Msg) {
 		log.Printf("TOOL program.list")
 
-		output, err := runTracked(context.Background(), "bpftool prog list -j", pub)
-		if err != nil {
-			respond(msg, ToolResult{Ok: false, Error: output})
+		if maps == nil {
+			respond(msg, ToolResult{Ok: false, Error: "eBPF maps not available"})
 			return
 		}
-		respond(msg, ToolResult{Ok: true, Data: output})
+		names := maps.List()
+		data, _ := json.Marshal(names)
+		respond(msg, ToolResult{Ok: true, Data: string(data)})
 	}
 }
 
@@ -596,12 +601,16 @@ func handleProgramLoad(pub *Publisher) nats.MsgHandler {
 		}
 		log.Printf("TOOL program.load: path=%s pin=%s", req.Path, req.Pin)
 
-		cmd, err := BuildProgramLoadCmd(req)
-		if err != nil {
+		if err := validatePath(req.Path); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+		if err := validatePinName(req.Pin); err != nil {
 			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
 
+		cmd := fmt.Sprintf("bpftool prog load %s /sys/fs/bpf/%s", shellQuote(req.Path), req.Pin)
 		output, err := runTracked(context.Background(), cmd, pub)
 		if err != nil {
 			respond(msg, ToolResult{Ok: false, Error: output})
@@ -620,12 +629,12 @@ func handleProgramDetach(pub *Publisher) nats.MsgHandler {
 		}
 		log.Printf("TOOL program.detach: pin=%s", req.Pin)
 
-		cmd, err := BuildProgramDetachCmd(req)
-		if err != nil {
+		if err := validatePinName(req.Pin); err != nil {
 			respond(msg, ToolResult{Ok: false, Error: err.Error()})
 			return
 		}
 
+		cmd := fmt.Sprintf("rm -f /sys/fs/bpf/%s", req.Pin)
 		output, err := runTracked(context.Background(), cmd, pub)
 		if err != nil {
 			respond(msg, ToolResult{Ok: false, Error: output})
