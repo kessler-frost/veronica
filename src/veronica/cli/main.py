@@ -219,6 +219,44 @@ def vm_ssh():
 
 VALID_EVENTS = frozenset({"process_exec", "process_exit", "net_connect", "file_open"})
 
+SUBSCRIPTION_PROMPT = """Given a list of behaviors for an eBPF kernel agent, return a JSON object with:
+- "events": array of eBPF event types to subscribe to. Valid: process_exec, process_exit, file_open, net_connect
+- "comms": array of command names (process names) that are relevant to these behaviors
+
+Example for "scaffold projects based on directory creation":
+{"events": ["process_exec"], "comms": ["mkdir", "git", "npm", "uv", "cargo", "bun", "go", "pip"]}
+
+Example for "revert dangerous permission changes":
+{"events": ["process_exec"], "comms": ["chmod", "chown", "chgrp"]}
+
+Example for "watch for service crashes and restart them":
+{"events": ["process_exit"], "comms": ["nginx", "postgres", "redis-server", "node", "python3", "gunicorn"]}
+
+Return ONLY the JSON object, no other text."""
+
+
+async def _resolve_subscriptions(behaviors: list[str]) -> tuple[list[str], list[str]]:
+    """Ask LLM which events and comms the behaviors need. Returns (events, comms)."""
+    model = cfg.build_model()
+    sub_agent = Agent(
+        model=model,
+        instructions=SUBSCRIPTION_PROMPT,
+        markdown=False,
+    )
+    behaviors_text = "\n".join(f"- {b}" for b in behaviors)
+    response = await sub_agent.arun(f"Behaviors:\n{behaviors_text}")
+    content = response.content.strip() if response else "{}"
+
+    json_start = content.find("{")
+    json_end = content.rfind("}") + 1
+    if json_start >= 0 and json_end > 0:
+        result = msgspec.json.decode(content[json_start:json_end].encode(), type=dict)
+        events = [e for e in result.get("events", []) if e in VALID_EVENTS]
+        comms = result.get("comms", [])
+        return events, comms
+
+    return [], []
+
 
 @app.command()
 def add(description: str = typer.Argument(help="Natural language behavior description")):
@@ -229,38 +267,24 @@ def add(description: str = typer.Argument(help="Natural language behavior descri
         js = nc.jetstream()
         kv = await js.key_value("agents")
 
-        # Load or create config
         try:
             entry = await kv.get("veronica")
             config = msgspec.json.decode(entry.value, type=dict)
         except Exception:
-            config = {"behaviors": [], "subscriptions": []}
+            config = {"behaviors": [], "subscriptions": [], "comm_filter": []}
 
         config["behaviors"].append(description)
 
-        # Ask LLM which events the combined behaviors need
-        model = cfg.build_model()
-        sub_agent = Agent(
-            model=model,
-            instructions="Given a list of behaviors for an eBPF agent, return ONLY a JSON array of event types needed. Valid types: process_exec, process_exit, file_open, net_connect. Example: [\"process_exec\", \"file_open\"]. No other text.",
-            markdown=False,
-        )
-        behaviors_text = "\n".join(f"- {b}" for b in config["behaviors"])
-        response = await sub_agent.arun(f"Behaviors:\n{behaviors_text}")
-        content = response.content.strip() if response else "[]"
-
-        # Parse event types from response
-        json_start = content.find("[")
-        json_end = content.rfind("]") + 1
-        if json_start >= 0 and json_end > 0:
-            event_types = msgspec.json.decode(content[json_start:json_end].encode(), type=list)
-            config["subscriptions"] = [e for e in event_types if e in VALID_EVENTS]
+        events, comms = await _resolve_subscriptions(config["behaviors"])
+        config["subscriptions"] = events
+        config["comm_filter"] = comms
 
         await kv.put("veronica", msgspec.json.encode(config))
         await nc.close()
 
         typer.echo(f"Added: {description}")
         typer.echo(f"  Subscriptions: {config['subscriptions']}")
+        typer.echo(f"  Watching: {config['comm_filter']}")
         typer.echo(f"  Total behaviors: {len(config['behaviors'])}")
 
     asyncio.run(_add())
@@ -284,6 +308,7 @@ def list_behaviors():
             return
 
         typer.echo(f"Subscriptions: {config.get('subscriptions', [])}")
+        typer.echo(f"Watching: {config.get('comm_filter', [])}")
         typer.echo(f"Behaviors ({len(config.get('behaviors', []))}):")
         for i, b in enumerate(config.get("behaviors", []), 1):
             typer.echo(f"  {i}. {b}")
@@ -324,29 +349,19 @@ def rm(description: str = typer.Argument(help="Behavior text to remove (partial 
 
         config["behaviors"] = behaviors
 
-        # Re-evaluate subscriptions
         if behaviors:
-            model = cfg.build_model()
-            sub_agent = Agent(
-                model=model,
-                instructions="Given a list of behaviors for an eBPF agent, return ONLY a JSON array of event types needed. Valid types: process_exec, process_exit, file_open, net_connect. No other text.",
-                markdown=False,
-            )
-            behaviors_text = "\n".join(f"- {b}" for b in behaviors)
-            response = await sub_agent.arun(f"Behaviors:\n{behaviors_text}")
-            content = response.content.strip() if response else "[]"
-            json_start = content.find("[")
-            json_end = content.rfind("]") + 1
-            if json_start >= 0 and json_end > 0:
-                event_types = msgspec.json.decode(content[json_start:json_end].encode(), type=list)
-                config["subscriptions"] = [e for e in event_types if e in VALID_EVENTS]
+            events, comms = await _resolve_subscriptions(behaviors)
+            config["subscriptions"] = events
+            config["comm_filter"] = comms
         else:
             config["subscriptions"] = []
+            config["comm_filter"] = []
 
         await kv.put("veronica", msgspec.json.encode(config))
         await nc.close()
 
         typer.echo(f"  Subscriptions: {config['subscriptions']}")
+        typer.echo(f"  Watching: {config.get('comm_filter', [])}")
         typer.echo(f"  Remaining behaviors: {len(behaviors)}")
 
     asyncio.run(_rm())

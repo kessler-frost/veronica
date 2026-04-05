@@ -43,6 +43,7 @@ class VeronicaAgent:
         self._nc: NATSClient | None = None
         self._js = None
         self._subs: list = []
+        self._comm_filter: set[str] = set()
         self._event_buffer: list[dict] = []
         self._debounce_task: asyncio.Task | None = None
         self._processing: bool = False
@@ -183,9 +184,15 @@ class VeronicaAgent:
         return f"veronica.{resource}".replace(":", "-").replace("/", "_")
 
     async def _on_event(self, msg) -> None:
-        """Buffer incoming events and debounce."""
+        """Buffer incoming events and debounce. Drops events not matching comm_filter."""
         event = msgspec.json.decode(msg.data, type=dict)
         event["_subject"] = msg.subject
+
+        # Drop events whose comm isn't in the filter (if filter is set)
+        if self._comm_filter:
+            comm = event.get("data", {}).get("comm", "")
+            if comm not in self._comm_filter:
+                return
 
         key = self._semantic_key(event)
         if any(self._semantic_key(e) == key for e in self._event_buffer):
@@ -293,8 +300,9 @@ class VeronicaAgent:
         config = await self._load_config()
         behaviors = config.get("behaviors", [])
         subscriptions = config.get("subscriptions", [])
+        self._comm_filter = set(config.get("comm_filter", []))
 
-        logger.info("loaded %d behaviors, subscriptions: %s", len(behaviors), subscriptions)
+        logger.info("loaded %d behaviors, subscriptions: %s, comm_filter: %s", len(behaviors), subscriptions, self._comm_filter)
         for b in behaviors:
             logger.info("  behavior: %s", b)
 
