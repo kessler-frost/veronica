@@ -25,8 +25,9 @@ uv sync
 uv run veronica vm start
 uv run veronica setup
 
-# Add an agent
-uv run veronica agent add "scaffold projects automatically based on directory creation"
+# Add behaviors
+uv run veronica add "scaffold projects automatically based on directory creation"
+uv run veronica add "revert dangerous permission changes on sensitive files"
 
 # Start (blocks — Ctrl+C to stop)
 uv run veronica start
