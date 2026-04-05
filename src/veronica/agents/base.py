@@ -183,35 +183,39 @@ class BaseAgent(ABC):
         return f"{self.agent_id}.{resource}".replace(":", "-").replace("/", "_")
 
     def _matches_filter(self, event: dict) -> bool:
-        """Check if event matches this agent's filter. Returns True if it should be processed."""
+        """Check if event matches this agent's filter. Returns True if it should be processed.
+
+        comm and paths are OR — if either matches, the event passes.
+        exit_codes is an additional AND filter on top.
+        """
         if not self._filter:
-            return True  # no filter = accept everything
+            return True
 
         data = event.get("data", {})
 
-        # comm whitelist
-        comm_filter = self._filter.get("comm")
-        if comm_filter:
-            comm = data.get("comm", "")
-            if comm not in comm_filter:
-                return False
-
-        # exit_codes whitelist
+        # exit_codes filter (AND — must match if present)
         exit_filter = self._filter.get("exit_codes")
         if exit_filter:
             exit_code = data.get("exit_code")
             if exit_code is not None and exit_code not in exit_filter:
                 return False
 
-        # paths whitelist (prefix match on cmdline or filename)
+        comm_filter = self._filter.get("comm")
         paths_filter = self._filter.get("paths")
+
+        # If both comm and paths are set, either matching is enough (OR)
+        comm_match = comm_filter and data.get("comm", "") in comm_filter
+        paths_match = False
         if paths_filter:
             cmdline = data.get("cmdline", "")
             filename = data.get("filename", "")
-            if not any(cmdline.find(p) >= 0 or filename.find(p) >= 0 for p in paths_filter):
-                return False
+            paths_match = any(cmdline.find(p) >= 0 or filename.find(p) >= 0 for p in paths_filter)
 
-        return True
+        # If neither filter is set, pass everything
+        if not comm_filter and not paths_filter:
+            return True
+
+        return comm_match or paths_match
 
     async def _on_event(self, msg) -> None:
         """Buffer incoming events and debounce — process as batch after quiet period."""
