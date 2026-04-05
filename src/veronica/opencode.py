@@ -58,11 +58,35 @@ class OpenCodeClient:
     async def send_message_and_wait(
         self, session_id: str, text: str, agent: str = "build",
         provider_id: str | None = None, model_id: str | None = None,
-        wait: float = 30,
+        timeout: float = 120,
     ) -> None:
-        """Send a message and wait a fixed duration for the LLM to process it."""
+        """Send a message and wait for session.idle SSE event (LLM finished)."""
+        done = asyncio.Event()
+
+        async def _watch():
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout + 10, read=timeout + 10)) as c:
+                async with c.stream("GET", self._url("/event"), headers=self._headers) as stream:
+                    async for line in stream.aiter_lines():
+                        if line.startswith("data:"):
+                            data = line[5:].strip()
+                            if '"session.idle"' in data and session_id in data:
+                                done.set()
+                                return
+
+        watch_task = asyncio.create_task(_watch())
+        # Small delay to ensure SSE stream is connected before sending
+        await asyncio.sleep(0.2)
         await self.send_message(session_id, text, agent, provider_id, model_id)
-        await asyncio.sleep(wait)
+        try:
+            await asyncio.wait_for(done.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("send_message_and_wait timed out after %ss for session %s", timeout, session_id)
+        finally:
+            watch_task.cancel()
+            try:
+                await watch_task
+            except asyncio.CancelledError:
+                pass
 
     async def list_sessions(self) -> list:
         async with httpx.AsyncClient() as c:
