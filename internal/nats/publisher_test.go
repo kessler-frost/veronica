@@ -58,26 +58,26 @@ func TestPublisher_SilentEventDropped(t *testing.T) {
 	}
 }
 
-func TestPublisher_UrgentEventPublished(t *testing.T) {
+func TestPublisher_PassEventPublished(t *testing.T) {
 	pub, srv := newTestPublisher(t)
 	ctx := context.Background()
 
-	// nginx crashing → urgent
+	// nginx exit → passes through to NATS
 	ev := event.Event{
 		Type:     "process_exit",
 		Resource: "pid:99",
 		Data:     `{"comm":"nginx","pid":99,"exit_code":1}`,
 	}
 	cat := pub.Publish(ctx, ev)
-	if cat != classifier.CategoryUrgent {
-		t.Fatalf("expected urgent, got %s", cat)
+	if cat != classifier.CategoryPass {
+		t.Fatalf("expected pass, got %s", cat)
 	}
 	if count := streamMsgCount(t, srv); count != 1 {
 		t.Fatalf("expected 1 message in stream, got %d", count)
 	}
 }
 
-func TestPublisher_UrgentEventCorrectSubject(t *testing.T) {
+func TestPublisher_PassEventCorrectSubject(t *testing.T) {
 	pub, srv := newTestPublisher(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -144,8 +144,8 @@ func TestPublisher_PayloadJSON(t *testing.T) {
 	if payload.Resource != "pid:99" {
 		t.Errorf("resource: want pid:99, got %s", payload.Resource)
 	}
-	if payload.Category != "urgent" {
-		t.Errorf("category: want urgent, got %s", payload.Category)
+	if payload.Category != "pass" {
+		t.Errorf("category: want pass, got %s", payload.Category)
 	}
 	if payload.Timestamp != "2026-04-04T12:00:00Z" {
 		t.Errorf("timestamp: want 2026-04-04T12:00:00Z, got %s", payload.Timestamp)
@@ -167,14 +167,14 @@ func TestPublisher_RunReadsFromChannel(t *testing.T) {
 	defer cancel()
 
 	events := make(chan event.Event, 3)
-	// nginx crash × 2 (urgent), systemd-resolved (silent)
+	// nginx exit × 2 (pass), systemd-resolved (silent — daemon prefix)
 	events <- event.Event{Type: "process_exit", Resource: "pid:10", Data: `{"comm":"nginx","pid":10,"exit_code":1}`}
 	events <- event.Event{Type: "process_exit", Resource: "pid:11", Data: `{"comm":"nginx","pid":11,"exit_code":2}`}
 	events <- event.Event{Type: "process_exec", Resource: "pid:12", Data: `{"comm":"systemd-resolved","pid":12}`}
 
 	go pub.Run(ctx, events)
 
-	// Poll until both urgent messages land or timeout
+	// Poll until both pass messages land or timeout
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if streamMsgCount(t, srv) == 2 {
@@ -204,10 +204,10 @@ func TestPublisher_TrackedPIDIsSilent(t *testing.T) {
 	}
 
 	pub.UntrackPID(555)
-	// After untracking, same event with non-standard path → urgent
+	// After untracking, event passes through
 	cat = pub.Publish(ctx, ev)
-	if cat != classifier.CategoryUrgent {
-		t.Fatalf("expected urgent after untrack, got %s", cat)
+	if cat != classifier.CategoryPass {
+		t.Fatalf("expected pass after untrack, got %s", cat)
 	}
 	if count := streamMsgCount(t, srv); count != 1 {
 		t.Fatalf("expected 1 message after untrack, got %d", count)

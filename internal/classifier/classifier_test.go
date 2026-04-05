@@ -34,45 +34,39 @@ func TestClassifier_OurPIDIsSilent(t *testing.T) {
 	}
 }
 
-func TestClassifier_SensitivePathIsUrgent(t *testing.T) {
+func TestClassifier_SilentCommsAreSilent(t *testing.T) {
 	c := New()
-	e := event.Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"chmod","cmdline":"chmod 777 /etc/shadow"}`}
-	if got := c.Classify(e); got != CategoryUrgent {
-		t.Fatalf("expected urgent for sensitive path, got %s", got)
+	for _, comm := range []string{"sshd", "login", "agetty"} {
+		e := event.Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `"}`}
+		if got := c.Classify(e); got != CategorySilent {
+			t.Fatalf("expected silent for %s, got %s", comm, got)
+		}
 	}
 }
 
-func TestClassifier_ServiceCrashIsUrgent(t *testing.T) {
+func TestClassifier_RegularCommandPasses(t *testing.T) {
+	c := New()
+	for _, comm := range []string{"mkdir", "git", "curl", "python3", "ls", "cat", "nginx", "sudo", "bash"} {
+		e := event.Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `","filename":"/usr/bin/` + comm + `"}`}
+		if got := c.Classify(e); got != CategoryPass {
+			t.Fatalf("expected pass for %s, got %s", comm, got)
+		}
+	}
+}
+
+func TestClassifier_ProcessExitPasses(t *testing.T) {
 	c := New()
 	e := event.Event{Type: "process_exit", Resource: "pid:1", Data: `{"comm":"nginx","exit_code":1}`}
-	if got := c.Classify(e); got != CategoryUrgent {
-		t.Fatalf("expected urgent for service crash, got %s", got)
+	if got := c.Classify(e); got != CategoryPass {
+		t.Fatalf("expected pass for process exit, got %s", got)
 	}
 }
 
-func TestClassifier_NonStandardPathIsUrgent(t *testing.T) {
+func TestClassifier_NetConnectPasses(t *testing.T) {
 	c := New()
-	e := event.Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"suspicious","filename":"/tmp/suspicious"}`}
-	if got := c.Classify(e); got != CategoryUrgent {
-		t.Fatalf("expected urgent for non-standard path, got %s", got)
-	}
-}
-
-func TestClassifier_NormalExitIsBatch(t *testing.T) {
-	c := New()
-	e := event.Event{Type: "process_exit", Resource: "pid:1", Data: `{"comm":"nginx","exit_code":0}`}
-	if got := c.Classify(e); got != CategoryBatch {
-		t.Fatalf("expected batch for normal exit, got %s", got)
-	}
-}
-
-func TestClassifier_RegularCommandIsBatch(t *testing.T) {
-	c := New()
-	for _, comm := range []string{"mkdir", "git", "curl", "python3", "ls", "cat"} {
-		e := event.Event{Type: "process_exec", Resource: "pid:1", Data: `{"comm":"` + comm + `","filename":"/usr/bin/` + comm + `"}`}
-		if got := c.Classify(e); got != CategoryBatch {
-			t.Fatalf("expected batch for %s, got %s", comm, got)
-		}
+	e := event.Event{Type: "net_connect", Resource: "ip:1.2.3.4:80", Data: `{"comm":"curl","daddr":"1.2.3.4","dport":80}`}
+	if got := c.Classify(e); got != CategoryPass {
+		t.Fatalf("expected pass for net_connect, got %s", got)
 	}
 }
 

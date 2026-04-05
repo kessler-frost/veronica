@@ -26,6 +26,7 @@ class DynamicAgent(BaseAgent):
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
         llm_semaphore: asyncio.Semaphore | None = None,
+        event_filter: dict | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -33,6 +34,7 @@ class DynamicAgent(BaseAgent):
             llm_base_url=llm_base_url,
             llm_model=llm_model,
             llm_semaphore=llm_semaphore,
+            event_filter=event_filter,
         )
         self.subscribed_events = events
         self._context_append = context_append
@@ -49,6 +51,7 @@ class AgentRunner:
         self._nc = None
         self._tasks: dict[str, asyncio.Task] = {}
         self._agents: dict[str, BaseAgent] = {}
+        self._configs: dict[str, dict] = {}
         self._llm_semaphore = asyncio.Semaphore(cfg.max_concurrent_agents)
 
     async def run(self) -> None:
@@ -87,8 +90,14 @@ class AgentRunner:
             if not update.value:
                 continue
             config = msgspec.json.decode(update.value, type=dict)
-            if config.get("status") == "active" and agent_id not in self._tasks:
-                await self._spawn_agent(agent_id, config)
+            if config.get("status") == "active":
+                if agent_id not in self._tasks:
+                    await self._spawn_agent(agent_id, config)
+                elif config != self._configs.get(agent_id):
+                    # Config changed — restart with new settings
+                    logger.info("config changed for %s, restarting", agent_id)
+                    await self._stop_agent(agent_id)
+                    await self._spawn_agent(agent_id, config)
             elif config.get("status") == "stopped" and agent_id in self._tasks:
                 await self._stop_agent(agent_id)
 
@@ -101,14 +110,17 @@ class AgentRunner:
             llm_base_url=self.cfg.llm_base_url,
             llm_model=self.cfg.llm_model,
             llm_semaphore=self._llm_semaphore,
+            event_filter=config.get("filter"),
         )
         self._agents[agent_id] = agent
+        self._configs[agent_id] = config
         self._tasks[agent_id] = asyncio.create_task(agent.run())
-        logger.info("spawned agent %s subscribed to %s", agent_id, config.get("events", []))
+        logger.info("spawned agent %s subscribed to %s filter=%s", agent_id, config.get("events", []), config.get("filter", {}))
 
     async def _stop_agent(self, agent_id: str) -> None:
         task = self._tasks.pop(agent_id, None)
         agent = self._agents.pop(agent_id, None)
+        self._configs.pop(agent_id, None)
         if task:
             task.cancel()
         if agent:

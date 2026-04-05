@@ -40,12 +40,14 @@ class BaseAgent(ABC):
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
         llm_semaphore: asyncio.Semaphore | None = None,
+        event_filter: dict | None = None,
     ):
         self.agent_id = agent_id
         self.nats_url = nats_url
         self._llm_base_url = llm_base_url
         self._llm_model = llm_model
         self._llm_semaphore = llm_semaphore or asyncio.Semaphore(1)
+        self._filter: dict = event_filter or {}
         self._nc: NATSClient | None = None
         self._js = None
         self._event_buffer: list[dict] = []
@@ -172,40 +174,44 @@ class BaseAgent(ABC):
         resource = event.get("resource", "unknown")
         return f"{self.agent_id}.{resource}".replace(":", "-").replace("/", "_")
 
-    def _is_noise(self, event: dict) -> bool:
-        """Pre-filter obvious system noise before it reaches the LLM."""
+    def _matches_filter(self, event: dict) -> bool:
+        """Check if event matches this agent's filter. Returns True if it should be processed."""
+        if not self._filter:
+            return True  # no filter = accept everything
+
         data = event.get("data", {})
-        comm = data.get("comm", "")
-        filename = data.get("filename", "")
-        cmdline = data.get("cmdline", "")
 
-        # System daemons and utilities
-        noise_comms = {
-            "systemd", "chronyd", "chronyc", "nm-dispatcher", "NetworkManager",
-            "dbus-daemon", "polkitd", "locale", "localectl", "hostnamectl",
-            "id", "stat", "uname", "whoami", "hostname", "uptime",
-            "console-login-", "agetty", "login", "sshd",
-        }
-        for nc in noise_comms:
-            if comm.startswith(nc):
-                return True
+        # comm whitelist
+        comm_filter = self._filter.get("comm")
+        if comm_filter:
+            comm = data.get("comm", "")
+            if comm not in comm_filter:
+                return False
 
-        # System paths
-        noise_paths = ["/usr/lib/systemd/", "/usr/lib/NetworkManager/", "/etc/NetworkManager/",
-                       "/run/chrony", "/usr/libexec/"]
-        for p in noise_paths:
-            if filename.startswith(p) or cmdline.startswith(p):
-                return True
+        # exit_codes whitelist
+        exit_filter = self._filter.get("exit_codes")
+        if exit_filter:
+            exit_code = data.get("exit_code")
+            if exit_code is not None and exit_code not in exit_filter:
+                return False
 
-        return False
+        # paths whitelist (prefix match on cmdline or filename)
+        paths_filter = self._filter.get("paths")
+        if paths_filter:
+            cmdline = data.get("cmdline", "")
+            filename = data.get("filename", "")
+            if not any(cmdline.find(p) >= 0 or filename.find(p) >= 0 for p in paths_filter):
+                return False
+
+        return True
 
     async def _on_event(self, msg) -> None:
         """Buffer incoming events and debounce — process as batch after quiet period."""
         event = msgspec.json.decode(msg.data, type=dict)
         event["_subject"] = msg.subject
 
-        # Drop obvious noise before buffering
-        if self._is_noise(event):
+        # Drop events that don't match this agent's filter
+        if not self._matches_filter(event):
             return
 
         # Skip if we already have an event with the same semantic key in the buffer
