@@ -15,7 +15,7 @@ import (
 
 func newTestPublisher(t *testing.T) (*Publisher, *Server) {
 	t.Helper()
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}

@@ -20,7 +20,7 @@ type Server struct {
 }
 
 type Config struct {
-	Port     int    // 0 for random (tests), 4222 for production
+	Port     int    // -1 for random (tests), 4222 for production
 	StoreDir string // JetStream storage directory
 }
 

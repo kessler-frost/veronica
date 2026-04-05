@@ -10,7 +10,7 @@ import (
 )
 
 func TestToolExec_EchoSucceeds(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestToolExec_EchoSucceeds(t *testing.T) {
 }
 
 func TestToolExec_DangerousCommandBlocked(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestToolExec_DangerousCommandBlocked(t *testing.T) {
 }
 
 func TestToolExec_BadJSONReturnsError(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestToolExec_BadJSONReturnsError(t *testing.T) {
 // startWithResponders is a shared helper that starts a server and registers all tool responders.
 func startWithResponders(t *testing.T) *Server {
 	t.Helper()
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}

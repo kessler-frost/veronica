@@ -7,7 +7,7 @@ import (
 )
 
 func TestServer_StartsWithJetStream(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestServer_StartsWithJetStream(t *testing.T) {
 }
 
 func TestServer_EventsStreamExists(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestServer_EventsStreamExists(t *testing.T) {
 }
 
 func TestServer_KVBucketsExist(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestServer_KVBucketsExist(t *testing.T) {
 }
 
 func TestServer_PublishAndConsumeEvent(t *testing.T) {
-	srv, err := Start(Config{Port: 0, StoreDir: t.TempDir()})
+	srv, err := Start(Config{Port: -1, StoreDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
