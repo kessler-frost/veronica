@@ -35,3 +35,14 @@ func PidFromData(data string) uint32 {
 	}
 	return payload.PID
 }
+
+// FilenameFromData extracts the filename field from an Event.Data JSON string.
+func FilenameFromData(data string) string {
+	var payload struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return ""
+	}
+	return payload.Filename
+}

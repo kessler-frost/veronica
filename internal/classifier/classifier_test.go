@@ -68,3 +68,31 @@ func TestClassifier_NetConnectPasses(t *testing.T) {
 		t.Fatalf("expected pass for net_connect, got %s", got)
 	}
 }
+
+func TestClassifier_FileOpenInterestingPathPasses(t *testing.T) {
+	c := New()
+	for _, path := range []string{"/etc/nginx/nginx.conf", "/home/user/.bashrc", "/tmp/data.csv", "/root/.ssh/id_ed25519"} {
+		e := event.Event{Type: "file_open", Resource: "file:" + path, Data: `{"comm":"vim","filename":"` + path + `"}`}
+		if got := c.Classify(e); got != CategoryPass {
+			t.Fatalf("expected pass for file_open %s, got %s", path, got)
+		}
+	}
+}
+
+func TestClassifier_FileOpenNoisyPathIsSilent(t *testing.T) {
+	c := New()
+	for _, path := range []string{"/proc/1/stat", "/sys/class/net/eth0", "/dev/null", "/usr/lib/libfoo.so", "/run/lock/file", "/var/cache/apt/pkg"} {
+		e := event.Event{Type: "file_open", Resource: "file:" + path, Data: `{"comm":"cat","filename":"` + path + `"}`}
+		if got := c.Classify(e); got != CategorySilent {
+			t.Fatalf("expected silent for file_open %s, got %s", path, got)
+		}
+	}
+}
+
+func TestClassifier_FileOpenUnknownPathIsSilent(t *testing.T) {
+	c := New()
+	e := event.Event{Type: "file_open", Resource: "file:/some/random/path", Data: `{"comm":"cat","filename":"/some/random/path"}`}
+	if got := c.Classify(e); got != CategorySilent {
+		t.Fatalf("expected silent for unknown path, got %s", got)
+	}
+}

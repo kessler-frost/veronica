@@ -60,10 +60,22 @@ func (m *Manager) LoadAndAttach() error {
 	}
 	m.readers = append(m.readers, procReader)
 
-	// File open kprobe — disabled for now, too noisy without path-based filtering.
-	// TODO: re-enable with eBPF map of watched paths instead of capturing all opens.
-	// fileObjs := bpf.FileOpenObjects{}
-	// if err := bpf.LoadFileOpenObjects(&fileObjs, nil); err == nil { ... }
+	// File open kprobe — filtered by classifier path prefixes
+	fileObjs := bpf.FileOpenObjects{}
+	if err := bpf.LoadFileOpenObjects(&fileObjs, nil); err != nil {
+		log.Printf("WARN: load file_open: %v", err)
+	} else {
+		m.maps.Register("file_open_events", fileObjs.Events)
+		fileLink, err := link.Kprobe("do_sys_openat2", fileObjs.TraceFileOpen, nil)
+		if err != nil {
+			log.Printf("WARN: attach file_open: %v", err)
+		} else {
+			m.links = append(m.links, fileLink)
+			if fileReader, err := ringbuf.NewReader(fileObjs.Events); err == nil {
+				m.readers = append(m.readers, fileReader)
+			}
+		}
+	}
 
 	// Net connect kprobe (non-fatal if unavailable)
 	netObjs := bpf.NetConnectObjects{}

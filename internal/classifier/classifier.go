@@ -42,6 +42,13 @@ type Classifier struct {
 	// SilentComms are individual commands that are never user activity.
 	SilentComms map[string]bool
 
+	// FileOpenPassPrefixes are path prefixes where file_open events are interesting.
+	// Files outside these paths are silently dropped.
+	FileOpenPassPrefixes []string
+
+	// FileOpenSilentPrefixes are path prefixes that are always noise for file_open.
+	FileOpenSilentPrefixes []string
+
 	// IsOurPID returns true for PIDs spawned by the action executor.
 	IsOurPID func(pid uint32) bool
 }
@@ -62,6 +69,18 @@ func New() *Classifier {
 
 		SilentComms: map[string]bool{
 			"sshd": true, "login": true, "agetty": true,
+		},
+
+		FileOpenPassPrefixes: []string{
+			"/etc/", "/home/", "/tmp/", "/var/www/",
+			"/opt/", "/root/", "/srv/",
+		},
+
+		FileOpenSilentPrefixes: []string{
+			"/proc/", "/sys/", "/dev/", "/run/",
+			"/usr/lib/", "/usr/share/", "/usr/bin/",
+			"/var/lib/dpkg/", "/var/lib/apt/", "/var/cache/",
+			"/var/veronica/",
 		},
 	}
 }
@@ -89,6 +108,28 @@ func (c *Classifier) Classify(e event.Event) EventCategory {
 		if strings.HasPrefix(comm, prefix) {
 			return CategorySilent
 		}
+	}
+
+	// file_open: path-based filtering to avoid flooding
+	if e.Type == "file_open" {
+		filename := event.FilenameFromData(e.Data)
+
+		// Explicitly silent paths — always drop
+		for _, prefix := range c.FileOpenSilentPrefixes {
+			if strings.HasPrefix(filename, prefix) {
+				return CategorySilent
+			}
+		}
+
+		// Only pass files in interesting paths
+		for _, prefix := range c.FileOpenPassPrefixes {
+			if strings.HasPrefix(filename, prefix) {
+				return CategoryPass
+			}
+		}
+
+		// Not in any pass prefix — drop
+		return CategorySilent
 	}
 
 	return CategoryPass
