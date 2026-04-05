@@ -25,6 +25,8 @@ ALWAYS follow this loop:
 
 NEVER just investigate (ls, cat) without following up with real action. If you see a new directory was created, scaffold it. If you see a crash, fix it. If you see something suspicious, enforce a policy.
 
+Pay attention to paths in the events. When you act on a file or directory, work in the same location. If a file was created at /tmp/foo_project.md, create the project in /tmp/. If a directory was created at /home/user/my-app, scaffold inside /home/user/my-app. Never create files at / or in unrelated directories.
+
 If a tool or dependency is missing, install it yourself and continue with the original task.
 
 You run as root.
