@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import subprocess
+from pathlib import Path
 
 import msgspec
 import nats as nats_client
@@ -35,6 +36,35 @@ def _vm_running() -> bool:
 
 def _vm_shell(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["limactl", "shell", cfg.vm_name, "--", *args], check=check)
+
+
+def _sync_to_vm():
+    """Copy project source files into the VM."""
+    host_root = Path(__file__).resolve().parents[3]
+    vm_path = cfg.vm_project_path
+    _vm_shell("mkdir", "-p", vm_path)
+    # Copy Go source, eBPF programs, configs — exclude .git, __pycache__, etc.
+    subprocess.run([
+        "limactl", "cp", "-r",
+        f"{host_root}/cmd", f"{cfg.vm_name}:{vm_path}/cmd",
+    ], check=True)
+    subprocess.run([
+        "limactl", "cp", "-r",
+        f"{host_root}/internal", f"{cfg.vm_name}:{vm_path}/internal",
+    ], check=True)
+    for f in ["go.mod", "go.sum"]:
+        src = host_root / f
+        if src.exists():
+            subprocess.run([
+                "limactl", "cp", str(src), f"{cfg.vm_name}:{vm_path}/{f}",
+            ], check=True)
+    # Copy lima service file
+    service = host_root / "lima" / "veronica.service"
+    if service.exists():
+        _vm_shell("mkdir", "-p", f"{vm_path}/lima")
+        subprocess.run([
+            "limactl", "cp", str(service), f"{cfg.vm_name}:{vm_path}/lima/veronica.service",
+        ], check=True)
 
 
 # --- Top-level commands ---
@@ -87,9 +117,11 @@ def logs():
 
 @app.command()
 def build():
-    """Build daemon in VM and restart."""
+    """Sync source to VM, build daemon, and restart."""
+    typer.echo("Syncing source to VM...")
+    _sync_to_vm()
     typer.echo("Building daemon...")
-    _vm_shell("bash", "-c", f"cd {cfg.project_path} && GOTOOLCHAIN=auto sudo -E go build -o {cfg.daemon_install_path} {cfg.daemon_pkg}")
+    _vm_shell("bash", "-c", f"cd {cfg.vm_project_path} && sudo -E go build -o {cfg.daemon_install_path} {cfg.daemon_pkg}")
     typer.echo("Restarting service...")
     _vm_shell("sudo", "systemctl", "restart", "veronica", check=False)
 
@@ -102,23 +134,25 @@ def run(ctx: typer.Context):
 
 @app.command()
 def setup():
-    """Full setup: eBPF compile, build, install service."""
+    """Full setup: sync source, eBPF compile, build, install service."""
     if not _vm_running():
         typer.echo("VM not running — run `veronica vm start` first", err=True)
         raise typer.Exit(1)
-    ebpf_dir = f"{cfg.project_path}/internal/ebpf/programs"
-    typer.echo("1/5 Generating vmlinux.h...")
+    typer.echo("1/6 Syncing source to VM...")
+    _sync_to_vm()
+    ebpf_dir = f"{cfg.vm_project_path}/internal/ebpf/programs"
+    typer.echo("2/6 Generating vmlinux.h...")
     _vm_shell("bash", "-c", f"cd {ebpf_dir} && bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h")
-    typer.echo("2/5 Compiling eBPF programs...")
+    typer.echo("3/6 Compiling eBPF programs...")
     for prog in ["process_exec", "file_open", "net_connect", "process_exit"]:
         _vm_shell("bash", "-c", f"cd {ebpf_dir} && clang -g -O2 -target bpf -D__TARGET_ARCH_arm64 -I. -c {prog}.c -o {prog}.o")
         typer.echo(f"   {prog}.o OK")
-    typer.echo("3/5 Generating Go bindings...")
-    _vm_shell("bash", "-c", f"cd {cfg.project_path} && GOTOOLCHAIN=auto go generate ./internal/ebpf/bpf/")
-    typer.echo("4/5 Building daemon...")
-    _vm_shell("bash", "-c", f"cd {cfg.project_path} && GOTOOLCHAIN=auto sudo -E go build -o {cfg.daemon_install_path} {cfg.daemon_pkg}")
-    typer.echo("5/5 Installing systemd service...")
-    _vm_shell("sudo", "cp", f"{cfg.project_path}/lima/veronica.service", "/etc/systemd/system/veronica.service")
+    typer.echo("4/6 Generating Go bindings...")
+    _vm_shell("bash", "-c", f"cd {cfg.vm_project_path} && go generate ./internal/ebpf/bpf/")
+    typer.echo("5/6 Building daemon...")
+    _vm_shell("bash", "-c", f"cd {cfg.vm_project_path} && sudo -E go build -o {cfg.daemon_install_path} {cfg.daemon_pkg}")
+    typer.echo("6/6 Installing systemd service...")
+    _vm_shell("sudo", "cp", f"{cfg.vm_project_path}/lima/veronica.service", "/etc/systemd/system/veronica.service")
     _vm_shell("sudo", "systemctl", "daemon-reload")
     _vm_shell("sudo", "systemctl", "enable", "veronica")
     typer.echo("Setup complete. Run `veronica start`.")
@@ -128,8 +162,20 @@ def setup():
 
 @vm_app.command("start")
 def vm_start():
-    """Start the Lima VM."""
-    subprocess.run(["limactl", "start", cfg.vm_name], check=True)
+    """Start the Lima VM. Creates from lima config if it doesn't exist."""
+    # Check if instance exists
+    result = subprocess.run(["limactl", "list", "--json"], capture_output=True, text=True)
+    exists = any(
+        json.loads(line).get("name") == cfg.vm_name
+        for line in result.stdout.strip().splitlines()
+        if line.strip()
+    )
+    if exists:
+        subprocess.run(["limactl", "start", cfg.vm_name], check=True)
+    else:
+        yaml_path = Path(__file__).resolve().parents[3] / cfg.lima_config
+        subprocess.run(["limactl", "create", f"--name={cfg.vm_name}", str(yaml_path)], check=True)
+        subprocess.run(["limactl", "start", cfg.vm_name], check=True)
 
 
 @vm_app.command("stop")
