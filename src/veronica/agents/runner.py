@@ -23,16 +23,20 @@ class DynamicAgent(BaseAgent):
         nats_url: str,
         events: list[str],
         context_append: str,
+        llm_provider: str = "openrouter",
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
+        openrouter_model: str = "qwen/qwen3.6-plus:free",
         llm_semaphore: asyncio.Semaphore | None = None,
         event_filter: dict | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
             nats_url=nats_url,
+            llm_provider=llm_provider,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
+            openrouter_model=openrouter_model,
             llm_semaphore=llm_semaphore,
             event_filter=event_filter,
         )
@@ -107,8 +111,10 @@ class AgentRunner:
             nats_url=self.cfg.nats_url,
             events=config.get("events", []),
             context_append=config.get("context", ""),
+            llm_provider=self.cfg.llm_provider,
             llm_base_url=self.cfg.llm_base_url,
             llm_model=self.cfg.llm_model,
+            openrouter_model=self.cfg.openrouter_model,
             llm_semaphore=self._llm_semaphore,
             event_filter=config.get("filter"),
         )

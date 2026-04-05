@@ -10,22 +10,21 @@ import msgspec
 import nats
 from agno.agent import Agent
 from agno.models.lmstudio import LMStudio
+from agno.models.openrouter import OpenRouter
 from nats.aio.client import Client as NATSClient
 
 logger = logging.getLogger(__name__)
 
-BASE_SYSTEM_PROMPT = """/no_think
-You are Veronica, an autonomous agent embedded in a Linux OS via eBPF.
-You receive kernel events and MUST take immediate action using your tools. Do NOT explain — just call tools.
+BASE_SYSTEM_PROMPT = """You are an autonomous eBPF agent embedded in a Linux OS. You observe kernel events and act on them by calling tools. You never ask questions or explain — you just act.
 
-RULES:
-1. ALWAYS call exec_command for every actionable event. Never describe — DO.
-2. You run as root. Use that power.
-3. If truly nothing to do: respond "no action needed"
+ALWAYS follow this loop:
+1. You receive kernel events describing what happened.
+2. Call exec_command one or more times to take action.
+3. Call final_answer with a short summary when done.
 
-Example — you see "mkdir /tmp/my-fastapi-app":
-  → call exec_command("cd /tmp/my-fastapi-app && uv init && uv add fastapi uvicorn", "scaffold fastapi project")
-  → call exec_command("cat > /tmp/my-fastapi-app/main.py << 'EOF'\nfrom fastapi import FastAPI\napp = FastAPI()\n@app.get('/')\ndef root(): return {'hello': 'world'}\nEOF", "create main.py")
+NEVER just investigate (ls, cat) without following up with real action. If you see a new directory was created, scaffold it. If you see a crash, fix it. If you see something suspicious, enforce a policy.
+
+You run as root.
 """
 
 DEBOUNCE_WINDOW = 2.0  # seconds to accumulate events before processing
@@ -40,15 +39,19 @@ class BaseAgent(ABC):
         self,
         agent_id: str,
         nats_url: str = "nats://localhost:4222",
+        llm_provider: str = "openrouter",
         llm_base_url: str = "http://localhost:1234",
         llm_model: str = "",
+        openrouter_model: str = "qwen/qwen3.6-plus:free",
         llm_semaphore: asyncio.Semaphore | None = None,
         event_filter: dict | None = None,
     ):
         self.agent_id = agent_id
         self.nats_url = nats_url
+        self._llm_provider = llm_provider
         self._llm_base_url = llm_base_url
         self._llm_model = llm_model
+        self._openrouter_model = openrouter_model
         self._llm_semaphore = llm_semaphore or asyncio.Semaphore(1)
         self._filter: dict = event_filter or {}
         self._nc: NATSClient | None = None
@@ -90,8 +93,11 @@ class BaseAgent(ABC):
 
         async def exec_command(command: str, reason: str = "") -> str:
             """Run a shell command in the VM. Use for file ops, package installs, service management."""
+            logger.info("[%s] TOOL exec_command: %s (%s)", self.agent_id, command[:200], reason)
             result = await self._call_nats_tool("exec", {"command": command, "reason": reason})
-            return result.get("data", result.get("error", str(result)))
+            output = result.get("data", result.get("error", str(result)))
+            logger.info("[%s] TOOL exec_command result: %s", self.agent_id, output[:200])
+            return output
 
         async def enforce(hook: str, target: str, action: str, reason: str = "") -> str:
             """Block or allow access via eBPF LSM or XDP. Use for security enforcement."""
@@ -128,12 +134,20 @@ class BaseAgent(ABC):
             keys = await self._kv_keys(bucket)
             return str(keys)
 
-        model = LMStudio(id=self._llm_model, base_url=self._llm_base_url, temperature=0.0)
+        async def final_answer(summary: str) -> str:
+            """Call this when you are done acting. Provide a short summary of actions taken, or 'no action needed' if the event was irrelevant."""
+            logger.info("[%s] TOOL final_answer: %s", self.agent_id, summary[:200])
+            return summary
+
+        if self._llm_provider == "openrouter":
+            model = OpenRouter(id=self._openrouter_model, temperature=0.0)
+        else:
+            model = LMStudio(id=self._llm_model, base_url=self._llm_base_url, temperature=0.0)
 
         return Agent(
             model=model,
             instructions=instructions,
-            tools=[exec_command, enforce, transform, schedule, measure, kv_get, kv_put, kv_keys],
+            tools=[exec_command, enforce, transform, schedule, measure, kv_get, kv_put, kv_keys, final_answer],
             telemetry=False,
             retries=3,
             delay_between_retries=2,
