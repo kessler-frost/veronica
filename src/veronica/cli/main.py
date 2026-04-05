@@ -221,7 +221,7 @@ VALID_EVENTS = frozenset({"process_exec", "process_exit", "net_connect", "file_o
 
 SUBSCRIPTION_PROMPT = """Given a list of behaviors for an eBPF kernel agent on Ubuntu Linux, return a JSON object with:
 - "events": array of eBPF event types to subscribe to. Valid: process_exec, process_exit, file_open, net_connect
-- "comms": array of ONLY the command names directly relevant to these behaviors. Be minimal — only include commands the agent must see to act. Do NOT include every possible variant or package manager on other distros.
+- "comms": array of command names the agent MUST see to act on ALL the behaviors listed. Be STRICT — only include the exact commands that directly trigger a behavior. No variants, no other-distro tools, no tangentially related commands.
 
 Example for "scaffold projects based on directory creation":
 {"events": ["process_exec"], "comms": ["mkdir", "git", "npm", "uv", "go"]}
@@ -229,7 +229,7 @@ Example for "scaffold projects based on directory creation":
 Example for "revert dangerous permission changes":
 {"events": ["process_exec"], "comms": ["chmod", "chown"]}
 
-Example for "watch for service crashes and restart them":
+Example for "watch for service crashes":
 {"events": ["process_exit"], "comms": ["nginx", "postgres", "node", "python3"]}
 
 Return ONLY the JSON object, no other text."""
@@ -276,8 +276,8 @@ def add(description: str = typer.Argument(help="Natural language behavior descri
         config["behaviors"].append(description)
 
         events, comms = await _resolve_subscriptions(config["behaviors"])
-        config["subscriptions"] = events
-        config["comm_filter"] = comms
+        config["subscriptions"] = sorted(set(config.get("subscriptions", []) + events))
+        config["comm_filter"] = sorted(set(config.get("comm_filter", []) + comms))
 
         await kv.put("veronica", msgspec.json.encode(config))
         await nc.close()
