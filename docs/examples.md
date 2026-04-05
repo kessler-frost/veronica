@@ -4,14 +4,13 @@ Real-world examples of how Veronica adds value to daily workflows. Each scenario
 
 ## 1. Project Scaffolding
 
-**Trigger:** `mkdir my-flask-api`
+**Trigger:** `mkdir my-fastapi-app`
 **Category:** Proactive
 **What Veronica does:**
-- Detects "flask" + "api" in the directory name
+- Detects "fastapi" + "app" in the directory name
 - Enters the directory
-- Runs `uv init`, `uv add flask`
-- Creates `app.py` with a hello world route
-- Creates a `Dockerfile`
+- Runs `uv init`, `uv add fastapi uvicorn`
+- Creates `main.py` with a hello world route
 - User walks into a ready-to-go project
 
 ## 2. Git Clone → Auto-Setup

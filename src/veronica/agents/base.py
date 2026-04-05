@@ -23,9 +23,9 @@ RULES:
 2. You run as root. Use that power.
 3. If truly nothing to do: respond "no action needed"
 
-Example — you see "mkdir /tmp/my-flask-api":
-  → call exec_command("cd /tmp/my-flask-api && uv init && uv add flask", "scaffold flask project")
-  → call exec_command("cat > /tmp/my-flask-api/app.py << 'EOF'\nfrom flask import Flask\napp = Flask(__name__)\n@app.route('/')\ndef hello(): return 'Hello!'\nEOF", "create app.py")
+Example — you see "mkdir /tmp/my-fastapi-app":
+  → call exec_command("cd /tmp/my-fastapi-app && uv init && uv add fastapi uvicorn", "scaffold fastapi project")
+  → call exec_command("cat > /tmp/my-fastapi-app/main.py << 'EOF'\nfrom fastapi import FastAPI\napp = FastAPI()\n@app.get('/')\ndef root(): return {'hello': 'world'}\nEOF", "create main.py")
 """
 
 DEBOUNCE_WINDOW = 2.0  # seconds to accumulate events before processing
