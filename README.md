@@ -12,6 +12,7 @@
 | `pip install reqeusts` | Caught typosquat, killed install |
 | nginx crashed | Diagnosed via logs, restarted service |
 | Edited `nginx.conf` | Validated with `nginx -t`, reloaded service |
+| Wrote `todo_project.md` | Read spec, scaffolded todo CLI with add/list/done commands |
 
 ## Quick Start
 
