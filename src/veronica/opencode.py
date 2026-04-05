@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -53,6 +54,32 @@ class OpenCodeClient:
                 headers=self._headers,
             )
             resp.raise_for_status()
+
+    async def send_message_and_wait(
+        self, session_id: str, text: str, agent: str = "build",
+        provider_id: str | None = None, model_id: str | None = None,
+        timeout: float = 120,
+    ) -> None:
+        """Send a message and wait for completion via SSE event stream."""
+        done = asyncio.Event()
+
+        async def _watch_sse():
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, read=timeout)) as c:
+                async with c.stream("GET", self._url("/event"), headers=self._headers) as stream:
+                    async for line in stream.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if '"type":"session.updated"' in data or '"type":"message.updated"' in data:
+                            # Check if the session is done (assistant message completed)
+                            if session_id in data and '"role":"assistant"' in data:
+                                done.set()
+                                return
+
+        sse_task = asyncio.create_task(_watch_sse())
+        await self.send_message(session_id, text, agent, provider_id, model_id)
+        await asyncio.wait_for(done.wait(), timeout=timeout)
+        sse_task.cancel()
 
     async def list_sessions(self) -> list:
         async with httpx.AsyncClient() as c:

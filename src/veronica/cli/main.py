@@ -178,16 +178,17 @@ def start():
 
         typer.echo(f"OpenCode session: {session['id']}")
 
-        # Send initial system prompt
-        await client.send_message(
+        # Send initial system prompt and wait for it to be processed
+        typer.echo("Initializing main agent...")
+        await client.send_message_and_wait(
             session["id"], MAIN_AGENT_PROMPT,
             provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
         )
 
-        # Replay stored behaviors
+        # Replay stored behaviors — sequentially, wait for each
         for behavior in data.get("behaviors", []):
-            typer.echo(f"Replaying: {behavior}")
-            await client.send_message(
+            typer.echo(f"Spawning: {behavior}")
+            await client.send_message_and_wait(
                 session["id"],
                 f"Create and spawn a new subagent for this behavior: {behavior}",
                 provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
