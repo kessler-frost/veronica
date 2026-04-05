@@ -72,15 +72,28 @@ func New() *Classifier {
 		},
 
 		// SilentComms are individual commands that are always noise.
+		// TEMPORARY: hardcoded silent list, will be replaced with smarter filtering
+		// NOTE: do NOT add mkdir, git, npm, uv, go, docker, pip, cargo, bun — those are interesting
 		SilentComms: map[string]bool{
+			// Shell login noise
+			"bash": true, "sh": true, "sudo": true, "unix_chkpwd": true,
 			"grep": true, "grepconf.sh": true, "sed": true,
 			"find": true, "xargs": true, "tr": true, "cat": true,
 			"tty": true, "locale": true, "id": true, "hostnamectl": true,
-			"head": true, "tail": true, "wc": true, "sort": true,
-			"cut": true, "awk": true, "basename": true, "dirname": true,
-			"test": true, "true": true, "false": true, "sleep": true,
+			// Basic utilities
+			"ls": true, "ps": true, "stat": true, "head": true, "tail": true,
+			"wc": true, "sort": true, "cut": true, "awk": true,
+			"basename": true, "dirname": true, "test": true,
+			"true": true, "false": true, "sleep": true,
 			"env": true, "printenv": true, "which": true, "whoami": true,
-			"date": true, "seq": true, "expr": true,
+			"date": true, "seq": true, "expr": true, "echo": true,
+			// System info
+			"uname": true, "uptime": true, "free": true, "df": true, "du": true,
+			"ss": true, "ip": true, "netstat": true, "lsof": true,
+			"mount": true, "lsblk": true, "file": true,
+			// File ops (not interesting for scaffolding)
+			"rm": true, "cp": true, "mv": true, "touch": true,
+			"chmod": true, "chown": true, "ln": true,
 		},
 
 		SensitivePaths: map[string]bool{
