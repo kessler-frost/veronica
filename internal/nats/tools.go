@@ -3,25 +3,27 @@ package nats
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	json "github.com/goccy/go-json"
 
 	"github.com/nats-io/nats.go"
 )
 
+// --- Request types ---
+
 type ExecRequest struct {
 	Command string `json:"command"`
 	Reason  string `json:"reason,omitempty"`
-}
-
-type ToolResult struct {
-	Ok    bool   `json:"ok"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
 }
 
 type EnforceRequest struct {
@@ -39,42 +41,316 @@ type TransformRequest struct {
 }
 
 type ScheduleRequest struct {
-	Target   string `json:"target"`   // PID or cgroup
+	Target   string `json:"target"`   // PID or cgroup path
 	Priority string `json:"priority"` // "latency-sensitive", "batch", "normal"
 	Reason   string `json:"reason"`
 }
 
 type MeasureRequest struct {
 	Target   string `json:"target"`
-	Metric   string `json:"metric"`   // "cache_misses", "cycles", "bandwidth"
+	Metric   string `json:"metric"`   // "cache_misses", "cycles", "bandwidth", "io"
 	Duration string `json:"duration"` // "5s", "1m"
 }
 
 type MapReadRequest struct {
 	Map string `json:"map"`
-	Key string `json:"key,omitempty"` // empty = dump all
+	Key string `json:"key,omitempty"` // hex-encoded; empty = dump all
 }
 
 type MapWriteRequest struct {
 	Map   string `json:"map"`
-	Key   string `json:"key"`
-	Value string `json:"value"`
+	Key   string `json:"key"`   // hex-encoded
+	Value string `json:"value"` // hex-encoded
 }
 
 type MapDeleteRequest struct {
 	Map string `json:"map"`
-	Key string `json:"key"`
+	Key string `json:"key"` // hex-encoded
 }
 
-type ProgramListRequest struct{} // no params
+type ProgramListRequest struct{}
 
 type ProgramLoadRequest struct {
-	Name string `json:"name"`
+	Path string `json:"path"` // path to compiled .o file
+	Pin  string `json:"pin"`  // pin name under /sys/fs/bpf/
 }
 
 type ProgramDetachRequest struct {
-	Name string `json:"name"`
+	Pin string `json:"pin"` // pin name under /sys/fs/bpf/
 }
+
+type ToolResult struct {
+	Ok    bool   `json:"ok"`
+	Data  string `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// --- Validation ---
+
+var (
+	reAlphaUnderscore = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	rePinName         = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+)
+
+func validateIP(s string) error {
+	if net.ParseIP(s) == nil {
+		return fmt.Errorf("invalid IP address: %q", s)
+	}
+	return nil
+}
+
+func validatePath(s string) error {
+	if s == "" {
+		return fmt.Errorf("empty path")
+	}
+	if strings.ContainsAny(s, ";|&$`\\\"'(){}!") {
+		return fmt.Errorf("path contains shell metacharacters: %q", s)
+	}
+	return nil
+}
+
+func validateMapName(s string) error {
+	if !reAlphaUnderscore.MatchString(s) {
+		return fmt.Errorf("invalid map name: %q (must be alphanumeric + underscore)", s)
+	}
+	return nil
+}
+
+func validateHexKey(s string) error {
+	clean := strings.ReplaceAll(s, " ", "")
+	if clean == "" {
+		return fmt.Errorf("empty hex key")
+	}
+	if _, err := hex.DecodeString(clean); err != nil {
+		return fmt.Errorf("invalid hex key: %w", err)
+	}
+	return nil
+}
+
+func validatePID(s string) error {
+	pid, err := strconv.ParseUint(s, 10, 32)
+	if err != nil || pid == 0 {
+		return fmt.Errorf("invalid PID: %q", s)
+	}
+	return nil
+}
+
+func validatePinName(s string) error {
+	if !rePinName.MatchString(s) {
+		return fmt.Errorf("invalid pin name: %q", s)
+	}
+	return nil
+}
+
+func parseDuration(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+	}
+	if d <= 0 || d > 5*time.Minute {
+		return 0, fmt.Errorf("duration must be between 0 and 5m, got %s", d)
+	}
+	return d, nil
+}
+
+func validateInterface(s string) error {
+	if s == "" {
+		return fmt.Errorf("empty interface name")
+	}
+	for _, c := range s {
+		if !unicode.IsLetter(c) && !unicode.IsDigit(c) && c != '-' && c != '_' && c != '.' {
+			return fmt.Errorf("invalid interface name: %q", s)
+		}
+	}
+	return nil
+}
+
+// shellQuote wraps a string in single quotes, escaping embedded quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// --- Command builders (exported for testing) ---
+
+func BuildEnforceCmd(req EnforceRequest) (string, error) {
+	switch req.Hook {
+	case "file_open":
+		if err := validatePath(req.Target); err != nil {
+			return "", err
+		}
+		switch req.Action {
+		case "deny":
+			return fmt.Sprintf("chmod a-rwx %s", shellQuote(req.Target)), nil
+		case "allow":
+			return fmt.Sprintf("chmod 644 %s", shellQuote(req.Target)), nil
+		default:
+			return "", fmt.Errorf("unknown action %q for file_open (want deny/allow)", req.Action)
+		}
+
+	case "xdp_drop", "socket_connect":
+		if err := validateIP(req.Target); err != nil {
+			return "", err
+		}
+		switch req.Action {
+		case "deny":
+			return fmt.Sprintf("iptables -I INPUT -s %s -j DROP && iptables -I OUTPUT -d %s -j DROP", req.Target, req.Target), nil
+		case "allow":
+			return fmt.Sprintf("iptables -D INPUT -s %s -j DROP 2>/dev/null; iptables -D OUTPUT -d %s -j DROP 2>/dev/null; true", req.Target, req.Target), nil
+		default:
+			return "", fmt.Errorf("unknown action %q (want deny/allow)", req.Action)
+		}
+
+	default:
+		return "", fmt.Errorf("unknown hook %q (want file_open/xdp_drop/socket_connect)", req.Hook)
+	}
+}
+
+func BuildTransformCmd(req TransformRequest) (string, error) {
+	if err := validateInterface(req.Interface); err != nil {
+		return "", err
+	}
+
+	// Parse match: "dport=80" or "dst=10.0.0.1"
+	matchParts := strings.SplitN(req.Match, "=", 2)
+	if len(matchParts) != 2 {
+		return "", fmt.Errorf("invalid match format %q (want key=value, e.g. dport=80)", req.Match)
+	}
+	matchKey, matchVal := matchParts[0], matchParts[1]
+
+	// Parse rewrite: "dport=8080" or "dst=10.0.0.2"
+	rewriteParts := strings.SplitN(req.Rewrite, "=", 2)
+	if len(rewriteParts) != 2 {
+		return "", fmt.Errorf("invalid rewrite format %q (want key=value, e.g. dport=8080)", req.Rewrite)
+	}
+	rewriteKey, rewriteVal := rewriteParts[0], rewriteParts[1]
+
+	switch {
+	case matchKey == "dport" && rewriteKey == "dport":
+		if _, err := strconv.Atoi(matchVal); err != nil {
+			return "", fmt.Errorf("invalid match port: %q", matchVal)
+		}
+		if _, err := strconv.Atoi(rewriteVal); err != nil {
+			return "", fmt.Errorf("invalid rewrite port: %q", rewriteVal)
+		}
+		return fmt.Sprintf("iptables -t nat -A PREROUTING -i %s -p tcp --dport %s -j REDIRECT --to-port %s",
+			req.Interface, matchVal, rewriteVal), nil
+
+	case matchKey == "dst" && rewriteKey == "dst":
+		if err := validateIP(matchVal); err != nil {
+			return "", fmt.Errorf("invalid match IP: %w", err)
+		}
+		if err := validateIP(rewriteVal); err != nil {
+			return "", fmt.Errorf("invalid rewrite IP: %w", err)
+		}
+		return fmt.Sprintf("iptables -t nat -A PREROUTING -i %s -d %s -j DNAT --to-destination %s",
+			req.Interface, matchVal, rewriteVal), nil
+
+	default:
+		return "", fmt.Errorf("unsupported transform: match %q rewrite %q (supported: dport→dport, dst→dst)", matchKey, rewriteKey)
+	}
+}
+
+func BuildScheduleCmd(req ScheduleRequest) (string, error) {
+	if err := validatePID(req.Target); err != nil {
+		return "", err
+	}
+	switch req.Priority {
+	case "latency-sensitive":
+		return fmt.Sprintf("renice -n -10 -p %s", req.Target), nil
+	case "batch":
+		return fmt.Sprintf("renice -n 19 -p %s", req.Target), nil
+	case "normal":
+		return fmt.Sprintf("renice -n 0 -p %s", req.Target), nil
+	default:
+		return "", fmt.Errorf("unknown priority %q (want latency-sensitive/batch/normal)", req.Priority)
+	}
+}
+
+func BuildMeasureCmd(req MeasureRequest) (string, error) {
+	dur, err := parseDuration(req.Duration)
+	if err != nil {
+		return "", err
+	}
+	secs := fmt.Sprintf("%d", int(dur.Seconds()))
+
+	switch req.Metric {
+	case "cache_misses":
+		if err := validatePID(req.Target); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("perf stat -e cache-misses -p %s sleep %s 2>&1", req.Target, secs), nil
+	case "cycles":
+		if err := validatePID(req.Target); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("perf stat -e cycles -p %s sleep %s 2>&1", req.Target, secs), nil
+	case "bandwidth":
+		// Target is an IP or interface — show socket stats
+		return fmt.Sprintf("ss -tnip | grep -F %s || true", shellQuote(req.Target)), nil
+	case "io":
+		if err := validatePID(req.Target); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("cat /proc/%s/io", req.Target), nil
+	default:
+		return "", fmt.Errorf("unknown metric %q (want cache_misses/cycles/bandwidth/io)", req.Metric)
+	}
+}
+
+func BuildMapReadCmd(req MapReadRequest) (string, error) {
+	if err := validateMapName(req.Map); err != nil {
+		return "", err
+	}
+	if req.Key == "" {
+		return fmt.Sprintf("bpftool map dump name %s -j", req.Map), nil
+	}
+	if err := validateHexKey(req.Key); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("bpftool map lookup name %s key hex %s", req.Map, req.Key), nil
+}
+
+func BuildMapWriteCmd(req MapWriteRequest) (string, error) {
+	if err := validateMapName(req.Map); err != nil {
+		return "", err
+	}
+	if err := validateHexKey(req.Key); err != nil {
+		return "", err
+	}
+	if err := validateHexKey(req.Value); err != nil {
+		return "", fmt.Errorf("invalid hex value: %w", err)
+	}
+	return fmt.Sprintf("bpftool map update name %s key hex %s value hex %s", req.Map, req.Key, req.Value), nil
+}
+
+func BuildMapDeleteCmd(req MapDeleteRequest) (string, error) {
+	if err := validateMapName(req.Map); err != nil {
+		return "", err
+	}
+	if err := validateHexKey(req.Key); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("bpftool map delete name %s key hex %s", req.Map, req.Key), nil
+}
+
+func BuildProgramLoadCmd(req ProgramLoadRequest) (string, error) {
+	if err := validatePath(req.Path); err != nil {
+		return "", err
+	}
+	if err := validatePinName(req.Pin); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("bpftool prog load %s /sys/fs/bpf/%s", shellQuote(req.Path), req.Pin), nil
+}
+
+func BuildProgramDetachCmd(req ProgramDetachRequest) (string, error) {
+	if err := validatePinName(req.Pin); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("rm -f /sys/fs/bpf/%s", req.Pin), nil
+}
+
+// --- Tool responder registration ---
 
 // RegisterToolResponders sets up NATS request/reply handlers for all daemon tools.
 // pub is used for PID tracking (so the classifier ignores commands we spawn).
@@ -83,123 +359,17 @@ func RegisterToolResponders(nc *nats.Conn, pub *Publisher) error {
 		subject string
 		handler nats.MsgHandler
 	}{
-		{"tools.exec", func(msg *nats.Msg) {
-			var req ExecRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL exec [%s]: %s", req.Reason, req.Command)
-
-			if isDangerous(req.Command) {
-				log.Printf("TOOL exec DENIED (dangerous): %s", req.Command)
-				respond(msg, ToolResult{Ok: false, Error: "DENIED: command matches dangerous pattern"})
-				return
-			}
-
-			ctx := context.Background()
-			output, err := runTracked(ctx, req.Command, pub)
-			if err != nil {
-				respond(msg, ToolResult{Ok: false, Error: output})
-				return
-			}
-			respond(msg, ToolResult{Ok: true, Data: output})
-		}},
-		{"tools.enforce", func(msg *nats.Msg) {
-			var req EnforceRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL enforce [%s]: %s %s %s", req.Reason, req.Hook, req.Target, req.Action)
-			// TODO: wire to eBPF manager LSM/kprobe/XDP map operations
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("enforce %s on %s via %s (pending eBPF wiring)", req.Action, req.Target, req.Hook)})
-		}},
-		{"tools.transform", func(msg *nats.Msg) {
-			var req TransformRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL transform [%s]: iface=%s match=%s rewrite=%s", req.Reason, req.Interface, req.Match, req.Rewrite)
-			// TODO: wire to eBPF manager TC/XDP rewrite map operations
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("transform on %s: %s -> %s (pending eBPF wiring)", req.Interface, req.Match, req.Rewrite)})
-		}},
-		{"tools.schedule", func(msg *nats.Msg) {
-			var req ScheduleRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL schedule [%s]: target=%s priority=%s", req.Reason, req.Target, req.Priority)
-			// TODO: wire to eBPF manager sched_ext map operations
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("schedule %s as %s (pending eBPF wiring)", req.Target, req.Priority)})
-		}},
-		{"tools.measure", func(msg *nats.Msg) {
-			var req MeasureRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL measure [%s]: target=%s metric=%s duration=%s", req.Target, req.Target, req.Metric, req.Duration)
-			// TODO: wire to eBPF manager perf_event map reads
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("measure %s on %s for %s (pending eBPF wiring)", req.Metric, req.Target, req.Duration)})
-		}},
-		{"tools.map.read", func(msg *nats.Msg) {
-			var req MapReadRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL map.read: map=%s key=%q", req.Map, req.Key)
-			// TODO: wire to eBPF manager map lookup/dump
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map read %s key=%q (pending eBPF wiring)", req.Map, req.Key)})
-		}},
-		{"tools.map.write", func(msg *nats.Msg) {
-			var req MapWriteRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL map.write: map=%s key=%q value=%q", req.Map, req.Key, req.Value)
-			// TODO: wire to eBPF manager map update
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map write %s[%s]=%s (pending eBPF wiring)", req.Map, req.Key, req.Value)})
-		}},
-		{"tools.map.delete", func(msg *nats.Msg) {
-			var req MapDeleteRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL map.delete: map=%s key=%q", req.Map, req.Key)
-			// TODO: wire to eBPF manager map delete
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map delete %s[%s] (pending eBPF wiring)", req.Map, req.Key)})
-		}},
-		{"tools.program.list", func(msg *nats.Msg) {
-			log.Printf("TOOL program.list")
-			// TODO: wire to eBPF manager program inventory
-			respond(msg, ToolResult{Ok: true, Data: "program list (pending eBPF wiring)"})
-		}},
-		{"tools.program.load", func(msg *nats.Msg) {
-			var req ProgramLoadRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL program.load: name=%s", req.Name)
-			// TODO: wire to eBPF manager dynamic program loading
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("program load %s (pending eBPF wiring)", req.Name)})
-		}},
-		{"tools.program.detach", func(msg *nats.Msg) {
-			var req ProgramDetachRequest
-			if err := json.Unmarshal(msg.Data, &req); err != nil {
-				respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
-				return
-			}
-			log.Printf("TOOL program.detach: name=%s", req.Name)
-			// TODO: wire to eBPF manager program detach/unload
-			respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("program detach %s (pending eBPF wiring)", req.Name)})
-		}},
+		{"tools.exec", handleExec(pub)},
+		{"tools.enforce", handleEnforce(pub)},
+		{"tools.transform", handleTransform(pub)},
+		{"tools.schedule", handleSchedule(pub)},
+		{"tools.measure", handleMeasure(pub)},
+		{"tools.map.read", handleMapRead(pub)},
+		{"tools.map.write", handleMapWrite(pub)},
+		{"tools.map.delete", handleMapDelete(pub)},
+		{"tools.program.list", handleProgramList(pub)},
+		{"tools.program.load", handleProgramLoad(pub)},
+		{"tools.program.detach", handleProgramDetach(pub)},
 	}
 
 	for _, s := range subs {
@@ -209,6 +379,263 @@ func RegisterToolResponders(nc *nats.Conn, pub *Publisher) error {
 	}
 	return nil
 }
+
+// --- Handlers ---
+
+func handleExec(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req ExecRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL exec [%s]: %s", req.Reason, req.Command)
+
+		if isDangerous(req.Command) {
+			log.Printf("TOOL exec DENIED (dangerous): %s", req.Command)
+			respond(msg, ToolResult{Ok: false, Error: "DENIED: command matches dangerous pattern"})
+			return
+		}
+
+		output, err := runTracked(context.Background(), req.Command, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: output})
+	}
+}
+
+func handleEnforce(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req EnforceRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL enforce [%s]: %s %s %s", req.Reason, req.Hook, req.Target, req.Action)
+
+		cmd, err := BuildEnforceCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("enforce %s %s on %s", req.Action, req.Hook, req.Target)})
+	}
+}
+
+func handleTransform(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req TransformRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL transform [%s]: iface=%s match=%s rewrite=%s", req.Reason, req.Interface, req.Match, req.Rewrite)
+
+		cmd, err := BuildTransformCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("transform on %s: %s → %s", req.Interface, req.Match, req.Rewrite)})
+	}
+}
+
+func handleSchedule(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req ScheduleRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL schedule [%s]: target=%s priority=%s", req.Reason, req.Target, req.Priority)
+
+		cmd, err := BuildScheduleCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("scheduled %s as %s", req.Target, req.Priority)})
+	}
+}
+
+func handleMeasure(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req MeasureRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL measure: target=%s metric=%s duration=%s", req.Target, req.Metric, req.Duration)
+
+		cmd, err := BuildMeasureCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: output})
+	}
+}
+
+func handleMapRead(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req MapReadRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL map.read: map=%s key=%q", req.Map, req.Key)
+
+		cmd, err := BuildMapReadCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: output})
+	}
+}
+
+func handleMapWrite(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req MapWriteRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL map.write: map=%s key=%q value=%q", req.Map, req.Key, req.Value)
+
+		cmd, err := BuildMapWriteCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map write %s[%s]", req.Map, req.Key)})
+	}
+}
+
+func handleMapDelete(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req MapDeleteRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL map.delete: map=%s key=%q", req.Map, req.Key)
+
+		cmd, err := BuildMapDeleteCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("map delete %s[%s]", req.Map, req.Key)})
+	}
+}
+
+func handleProgramList(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		log.Printf("TOOL program.list")
+
+		output, err := runTracked(context.Background(), "bpftool prog list -j", pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: output})
+	}
+}
+
+func handleProgramLoad(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req ProgramLoadRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL program.load: path=%s pin=%s", req.Path, req.Pin)
+
+		cmd, err := BuildProgramLoadCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("loaded %s pinned at /sys/fs/bpf/%s", req.Path, req.Pin)})
+	}
+}
+
+func handleProgramDetach(pub *Publisher) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var req ProgramDetachRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			respond(msg, ToolResult{Ok: false, Error: fmt.Sprintf("bad request: %v", err)})
+			return
+		}
+		log.Printf("TOOL program.detach: pin=%s", req.Pin)
+
+		cmd, err := BuildProgramDetachCmd(req)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: err.Error()})
+			return
+		}
+
+		output, err := runTracked(context.Background(), cmd, pub)
+		if err != nil {
+			respond(msg, ToolResult{Ok: false, Error: output})
+			return
+		}
+		respond(msg, ToolResult{Ok: true, Data: fmt.Sprintf("detached %s", req.Pin)})
+	}
+}
+
+// --- Helpers ---
 
 func runTracked(ctx context.Context, command string, pub *Publisher) (string, error) {
 	var buf bytes.Buffer
