@@ -99,6 +99,12 @@ class OpenCodeClient:
             resp = await c.post(self._url(f"/session/{session_id}/abort"), headers=self._headers)
             resp.raise_for_status()
 
+    async def get_messages(self, session_id: str) -> list:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get(self._url(f"/session/{session_id}/message"), headers=self._headers)
+            resp.raise_for_status()
+            return resp.json()
+
     async def list_agents(self) -> list:
         async with httpx.AsyncClient() as c:
             resp = await c.get(self._url("/agent"), headers=self._headers)

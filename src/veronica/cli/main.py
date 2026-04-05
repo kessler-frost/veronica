@@ -85,7 +85,24 @@ def _sync_to_vm():
 def _load_behaviors() -> dict:
     if cfg.behaviors_file.exists():
         return json.loads(cfg.behaviors_file.read_text())
-    return {"behaviors": [], "subagents": {}, "session_id": None}
+    return {"behaviors": [], "subagents": {}}
+
+
+
+
+
+def _parse_veronica_config(messages: list) -> dict | None:
+    """Extract VERONICA_CONFIG JSON from OpenCode message history."""
+    for msg in messages:
+        for part in msg.get("parts", []):
+            text = part.get("text", "")
+            if "VERONICA_CONFIG:" in text:
+                for line in text.split("\n"):
+                    line = line.strip()
+                    if line.startswith("VERONICA_CONFIG:"):
+                        payload = line[len("VERONICA_CONFIG:"):]
+                        return json.loads(payload)
+    return None
 
 
 def _save_behaviors(data: dict) -> None:
@@ -179,32 +196,46 @@ def start():
 
     async def _run():
         client = OpenCodeClient(base_url=cfg.opencode_url)
-
-        # Create main session
         data = _load_behaviors()
-        session = await client.create_session()
-        data["session_id"] = session["id"]
-        _save_behaviors(data)
 
-        typer.echo(f"OpenCode session: {session['id']}")
-
-        # Send initial system prompt and wait for it to be processed
-        typer.echo("Initializing main agent...")
-        await client.send_message_and_wait(
-            session["id"], MAIN_AGENT_PROMPT,
-            provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
-        )
-
-        # Replay stored behaviors — sequentially, wait for each
+        # For each behavior that doesn't have a subagent session yet, create one
         for behavior in data.get("behaviors", []):
-            typer.echo(f"Spawning: {behavior}")
+            # Check if we already have a subagent for this behavior
+            matching = [
+                name for name, sa in data.get("subagents", {}).items()
+                if sa.get("behavior") == behavior
+            ]
+            if matching:
+                typer.echo(f"Subagent already exists: {matching[0]}")
+                continue
+
+            # Use creator agent to write the .md file and get config
+            typer.echo(f"Creating agent for: {behavior}")
+            creator_session = await client.create_session()
             await client.send_message_and_wait(
-                session["id"],
-                f"Create and spawn a new subagent for this behavior: {behavior}",
+                creator_session["id"],
+                f"{MAIN_AGENT_PROMPT}\n\nCreate a subagent for this behavior: {behavior}",
                 provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
             )
 
-        # Start event watcher
+            # Parse VERONICA_CONFIG from the creator's response
+            messages = await client.get_messages(creator_session["id"])
+            config = _parse_veronica_config(messages)
+
+            if config:
+                # Create a standalone session for this subagent
+                subagent_session = await client.create_session()
+                config["session_id"] = subagent_session["id"]
+                config["behavior"] = behavior
+                data.setdefault("subagents", {})[config["name"]] = config
+                _save_behaviors(data)
+                typer.echo(f"  Agent: {config['name']} → session {subagent_session['id']}")
+                typer.echo(f"  Subscriptions: {config.get('subscriptions', [])}")
+                typer.echo(f"  Comm filter: {config.get('comm_filter', [])}")
+            else:
+                typer.echo(f"  WARNING: No VERONICA_CONFIG returned for: {behavior}")
+
+        # Start event watcher with routing table
         watcher = EventWatcher(
             nats_url=cfg.nats_url, opencode=client,
             provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
@@ -212,7 +243,7 @@ def start():
         watcher.set_routing(data.get("subagents", {}))
         await watcher.start()
 
-        typer.echo("Veronica running (Ctrl+C to stop)...")
+        typer.echo(f"Veronica running with {len(data.get('subagents', {}))} subagents (Ctrl+C to stop)...")
         stop = asyncio.Event()
         try:
             await stop.wait()
@@ -344,20 +375,7 @@ def add(description: str = typer.Argument(help="Natural language behavior descri
     data = _load_behaviors()
     data["behaviors"].append(description)
     _save_behaviors(data)
-
-    session_id = data.get("session_id")
-    if session_id:
-        async def _add():
-            client = OpenCodeClient(base_url=cfg.opencode_url)
-            await client.send_message(
-                session_id,
-                f"Create and spawn a new subagent for this behavior: {description}",
-                provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
-            )
-        asyncio.run(_add())
-        typer.echo(f"Added and spawned: {description}")
-    else:
-        typer.echo(f"Added: {description} (will spawn on next `veronica start`)")
+    typer.echo(f"Added: {description} (will create agent on next `veronica start`)")
 
 
 @app.command("list")
@@ -398,17 +416,15 @@ def rm(description: str = typer.Argument(help="Behavior text to remove (partial 
         behaviors.remove(m)
         typer.echo(f"Removed: {m}")
 
+    # Remove associated subagents and their .md files
+    subagents = data.get("subagents", {})
+    for name, sa in list(subagents.items()):
+        if sa.get("behavior") in matches:
+            agent_file = Path(f".opencode/agents/{name}.md")
+            if agent_file.exists():
+                agent_file.unlink()
+            del subagents[name]
+            typer.echo(f"  Deleted subagent: {name}")
+
     data["behaviors"] = behaviors
     _save_behaviors(data)
-
-    session_id = data.get("session_id")
-    if session_id:
-        async def _rm():
-            client = OpenCodeClient(base_url=cfg.opencode_url)
-            for m in matches:
-                await client.send_message(
-                    session_id,
-                    f"Kill the subagent that handles this behavior: {m}",
-                    provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
-                )
-        asyncio.run(_rm())

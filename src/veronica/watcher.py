@@ -97,9 +97,10 @@ class EventWatcher:
             lines.append(f"  {data.get('comm', '')} {detail}")
         batch_text = "\n".join(lines)
 
-        logger.info("sending %d events to subagent %s", len(events), name)
+        logger.info("sending %d events to subagent %s (session %s)", len(events), name, session_id)
         await self._opencode.send_message(
             session_id, batch_text,
+            agent=name,
             provider_id=self._provider_id, model_id=self._model_id,
         )
 
