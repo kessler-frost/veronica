@@ -2,7 +2,7 @@
 
 > Proactive agents at the kernel level, powered by eBPF
 
-| User did | Agent did |
+| User did | Veronica did |
 |---|---|
 | `mkdir my-fastapi-app` | Scaffolded full project — `main.py`, `requirements.txt`, tests |
 | `mkdir my-go-server` | `go mod init`, created `main.go`, `Makefile` |

@@ -9,11 +9,11 @@
 
 ## Architecture
 - **Daemon** (`cmd/veronicad/`): Go binary, runs as root in Lima VM. Embedded NATS server + JetStream, eBPF manager, classifier, event publisher. Tool responders on NATS request/reply. All state in NATS KV.
-- **Host Agent** (`src/veronica/agents/agent.py`): Single Python agent, runs on macOS host. Connects to daemon via NATS, accumulates behaviors from `veronica add`, subscribes to relevant event types dynamically.
+- **Veronica** (`src/veronica/agents/agent.py`): Single Python process, runs on macOS host. Connects to daemon via NATS, accumulates behaviors from `veronica add`, subscribes to relevant event types dynamically.
 - **CLI** (`src/veronica/cli/`): Python (Typer), manages VM lifecycle, daemon, and behaviors.
 - **NATS**: embedded server + JetStream. Events stream (5min TTL), KV buckets for agents/tasks/policies/logs.
 - **Why not SSH**: daemon holds live eBPF map/program file descriptors. The daemon IS the eBPF runtime.
-- **Noise filtering**: TEMPORARY — hardcoded silent command lists in Go classifier + Python agent. Will be replaced with smarter approach.
+- **Noise filtering**: TEMPORARY — hardcoded silent command lists in Go classifier + comm filter in Veronica. Will be replaced with smarter approach.
 - **Design specs**: `docs/superpowers/specs/2026-04-03-veronica-design.md`, `docs/superpowers/specs/2026-04-04-two-step-model-design.md`
 
 ## CLI (`uv run veronica`)
@@ -25,8 +25,8 @@
 - `uv run veronica add "<description>"` — Add a behavior
 - `uv run veronica list` — List all behaviors and subscriptions
 - `uv run veronica rm "<description>"` — Remove a behavior (partial match)
-- `uv run veronica start` — Start VM + daemon + agent (blocks, Ctrl+C to stop)
-- `uv run veronica stop` — Stop agent + daemon
+- `uv run veronica start` — Start VM + daemon + Veronica (blocks, Ctrl+C to stop)
+- `uv run veronica stop` — Stop Veronica + daemon
 - `uv run veronica status` — Show VM and daemon status
 - `uv run veronica logs` — Stream daemon logs (journalctl)
 - `uv run veronica run <cmd>` — Run arbitrary command in VM
