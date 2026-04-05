@@ -46,3 +46,19 @@ func FilenameFromData(data string) string {
 	}
 	return payload.Filename
 }
+
+// FlagsFromData extracts the flags field from an Event.Data JSON string.
+func FlagsFromData(data string) int32 {
+	var payload struct {
+		Flags int32 `json:"flags"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return 0
+	}
+	return payload.Flags
+}
+
+// IsWriteOpen returns true if open flags indicate writing (O_WRONLY=1 or O_RDWR=2).
+func IsWriteOpen(flags int32) bool {
+	return flags&0x3 != 0 // O_WRONLY (1) or O_RDWR (2)
+}

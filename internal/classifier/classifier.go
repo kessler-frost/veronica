@@ -110,8 +110,14 @@ func (c *Classifier) Classify(e event.Event) EventCategory {
 		}
 	}
 
-	// file_open: path-based filtering to avoid flooding
+	// file_open: only writes to interesting paths
 	if e.Type == "file_open" {
+		// Drop read-only opens — only writes are interesting
+		flags := event.FlagsFromData(e.Data)
+		if !event.IsWriteOpen(flags) {
+			return CategorySilent
+		}
+
 		filename := event.FilenameFromData(e.Data)
 
 		// Explicitly silent paths — always drop

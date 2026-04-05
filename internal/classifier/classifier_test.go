@@ -69,13 +69,23 @@ func TestClassifier_NetConnectPasses(t *testing.T) {
 	}
 }
 
-func TestClassifier_FileOpenInterestingPathPasses(t *testing.T) {
+func TestClassifier_FileOpenWriteInterestingPathPasses(t *testing.T) {
 	c := New()
 	for _, path := range []string{"/etc/nginx/nginx.conf", "/home/user/.bashrc", "/tmp/data.csv", "/root/.ssh/id_ed25519"} {
-		e := event.Event{Type: "file_open", Resource: "file:" + path, Data: `{"comm":"vim","filename":"` + path + `"}`}
+		// flags=1 is O_WRONLY
+		e := event.Event{Type: "file_open", Resource: "file:" + path, Data: `{"comm":"vim","filename":"` + path + `","flags":1}`}
 		if got := c.Classify(e); got != CategoryPass {
-			t.Fatalf("expected pass for file_open %s, got %s", path, got)
+			t.Fatalf("expected pass for write to %s, got %s", path, got)
 		}
+	}
+}
+
+func TestClassifier_FileOpenReadOnlyIsSilent(t *testing.T) {
+	c := New()
+	// flags=0 is O_RDONLY — should be dropped even for interesting paths
+	e := event.Event{Type: "file_open", Resource: "file:/etc/nginx/nginx.conf", Data: `{"comm":"cat","filename":"/etc/nginx/nginx.conf","flags":0}`}
+	if got := c.Classify(e); got != CategorySilent {
+		t.Fatalf("expected silent for read-only file_open, got %s", got)
 	}
 }
 
