@@ -69,9 +69,27 @@ def _sync_to_vm():
 
 # --- Top-level commands ---
 
+def _veronica_already_running() -> bool:
+    """Check if another veronica start process is already running."""
+    our_pid = os.getpid()
+    result = subprocess.run(
+        ["pgrep", "-f", "veronica start"],
+        capture_output=True, text=True,
+    )
+    for line in result.stdout.strip().splitlines():
+        pid = int(line.strip())
+        if pid != our_pid:
+            return True
+    return False
+
+
 @app.command()
 def start():
     """Start VM, daemon, and agent runner. Idempotent."""
+    if _veronica_already_running():
+        typer.echo("Another veronica process is already running. Run `veronica stop` first.", err=True)
+        raise typer.Exit(1)
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     if not _vm_running():
@@ -94,7 +112,15 @@ def start():
 
 @app.command()
 def stop():
-    """Stop daemon service."""
+    """Stop agent runner and daemon service."""
+    # Kill any running veronica start processes (agent runners)
+    result = subprocess.run(["pgrep", "-f", "veronica start"], capture_output=True, text=True)
+    our_pid = os.getpid()
+    for line in result.stdout.strip().splitlines():
+        pid = int(line.strip())
+        if pid != our_pid:
+            os.kill(pid, 9)
+            typer.echo(f"Killed agent runner (pid {pid})")
     typer.echo("Stopping daemon...")
     _vm_shell("sudo", "systemctl", "stop", "veronica")
 
@@ -206,6 +232,7 @@ def agent_add(description: str = typer.Argument(help="Natural language descripti
 
         agent_data = {
             "events": config["events"],
+            "filter": config.get("filter", {}),
             "context": config["context"],
             "status": "active",
             "description": description,
@@ -215,6 +242,7 @@ def agent_add(description: str = typer.Argument(help="Natural language descripti
 
         typer.echo(f"Created agent '{config['name']}'")
         typer.echo(f"  Subscribed to: {', '.join(config['events'])}")
+        typer.echo(f"  Filter: {config.get('filter', {})}")
         typer.echo(f"  Context: {config['context']}")
 
     asyncio.run(_add())

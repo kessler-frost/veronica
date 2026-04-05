@@ -132,6 +132,8 @@ class BaseAgent(ABC):
             instructions=instructions,
             tools=[exec_command, enforce, transform, schedule, measure, kv_get, kv_put, kv_keys],
             telemetry=False,
+            retries=3,
+            delay_between_retries=2,
         )
 
     @abstractmethod

@@ -45,10 +45,20 @@ async def create_agent_config(description: str, llm_base_url: str, llm_model: st
         model=LMStudio(id=llm_model, base_url=llm_base_url),
         instructions=CREATOR_PROMPT,
         markdown=False,
+        retries=3,
+        delay_between_retries=2,
     )
 
     response = await agent.arun(description)
     content = response.content.strip() if response else ""
+    logger.info("creator LLM response: %s", content[:500])
+
+    # Extract JSON from response — model may wrap it in markdown or thinking tags
+    json_start = content.find("{")
+    json_end = content.rfind("}") + 1
+    if json_start == -1 or json_end == 0:
+        raise ValueError(f"No JSON object found in LLM response: {content[:200]}")
+    content = content[json_start:json_end]
 
     config = msgspec.json.decode(content.encode(), type=dict)
 

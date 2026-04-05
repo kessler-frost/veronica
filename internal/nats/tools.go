@@ -229,17 +229,6 @@ func runTracked(ctx context.Context, command string, pub *Publisher) (string, er
 	output := strings.TrimSpace(buf.String())
 
 	if err != nil {
-		if strings.Contains(output, "command not found") || strings.Contains(output, "No such file") {
-			toolName := extractToolName(output)
-			if toolName != "" {
-				log.Printf("TOOL exec: %q not found, installing...", toolName)
-				installOut, installErr := installTool(ctx, toolName)
-				if installErr != nil {
-					return output + "\ninstall attempt: " + installOut, err
-				}
-				return runTracked(ctx, command, pub)
-			}
-		}
 		return output, err
 	}
 	return output, nil
@@ -280,30 +269,4 @@ func isDangerous(cmd string) bool {
 		}
 	}
 	return false
-}
-
-func extractToolName(errOutput string) string {
-	if idx := strings.Index(errOutput, ": command not found"); idx != -1 {
-		before := errOutput[:idx]
-		lastColon := strings.LastIndex(before, ": ")
-		if lastColon != -1 {
-			return strings.TrimSpace(before[lastColon+2:])
-		}
-	}
-	return ""
-}
-
-func installTool(ctx context.Context, toolName string) (string, error) {
-	var installCmd string
-	switch toolName {
-	case "uv", "uvx":
-		installCmd = "curl -LsSf https://astral.sh/uv/install.sh | bash && ln -sf /root/.local/bin/uv /usr/local/bin/uv && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx"
-	case "bun", "bunx":
-		installCmd = "curl -fsSL https://bun.sh/install | bash && ln -sf /root/.bun/bin/bun /usr/local/bin/bun"
-	default:
-		installCmd = "dnf install -y " + toolName
-	}
-	log.Printf("TOOL exec: installing %s via: %s", toolName, installCmd)
-	out, err := exec.CommandContext(ctx, "bash", "-c", installCmd).CombinedOutput()
-	return strings.TrimSpace(string(out)), err
 }
