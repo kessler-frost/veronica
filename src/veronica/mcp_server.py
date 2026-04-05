@@ -83,24 +83,42 @@ async def measure(target: str, metric: str, duration: str = "5s") -> str:
 
 
 @mcp.tool
-async def list_event_types() -> str:
-    """List all eBPF event types you can subscribe to, with descriptions.
-    Call this first to understand what events are available."""
+async def list_subscriptions() -> str:
+    """List all available eBPF event types, their data fields, and filtering options.
+    Call this FIRST to understand what you can subscribe to, then call subscribe to configure your event stream."""
     return json.dumps({
-        "process_exec": "Fires when a new process starts (sched_process_exec tracepoint). Data: comm, cmdline, cwd, pid, uid, filename.",
-        "process_exit": "Fires when a process exits (sched_process_exit tracepoint). Data: comm, pid, uid, exit_code.",
-        "file_open": "Fires when a file is opened for writing (kprobe/do_sys_openat2, write-only). Data: comm, pid, filename, flags.",
-        "net_connect": "Fires when a TCP connection is initiated (kprobe/tcp_v4_connect). Data: comm, pid, daddr, dport.",
-    })
+        "event_types": {
+            "process_exec": {
+                "description": "Fires when a new process starts (sched_process_exec tracepoint)",
+                "data_fields": {"comm": "process name", "cmdline": "full command line", "cwd": "working directory", "pid": "process ID", "uid": "user ID", "filename": "executable path"},
+            },
+            "process_exit": {
+                "description": "Fires when a process exits (sched_process_exit tracepoint)",
+                "data_fields": {"comm": "process name", "pid": "process ID", "uid": "user ID", "exit_code": "exit status"},
+            },
+            "file_open": {
+                "description": "Fires when a file is opened for writing (kprobe/do_sys_openat2, write-only opens in /etc/, /home/, /tmp/, /opt/, /root/, /srv/)",
+                "data_fields": {"comm": "process name", "pid": "process ID", "filename": "file path", "flags": "open flags"},
+            },
+            "net_connect": {
+                "description": "Fires when a TCP connection is initiated (kprobe/tcp_v4_connect)",
+                "data_fields": {"comm": "process name", "pid": "process ID", "daddr": "destination IP", "dport": "destination port"},
+            },
+        },
+        "filters": {
+            "comm_filter": "Optional list of exact process names. Only events from these processes will be delivered. Example: ['mkdir', 'git', 'chmod']. If empty, all processes match.",
+        },
+    }, indent=2)
 
 
 @mcp.tool
-async def subscribe_events(agent_name: str, event_types: list[str], comm_filter: list[str] | None = None) -> str:
-    """Subscribe this agent to specific eBPF event types. Call this FIRST when you start.
+async def subscribe(agent_name: str, event_types: list[str], comm_filter: list[str] | None = None) -> str:
+    """Configure which eBPF events this agent receives. Replaces any previous subscription.
 
-    Valid event_types: process_exec, process_exit, file_open, net_connect
-    Optional comm_filter: list of exact command names to watch (e.g. ["mkdir", "git"]).
-    If not provided, all events of the subscribed types will be delivered.
+    Args:
+        agent_name: Your agent name (must match your .md filename without extension)
+        event_types: List of event types to receive. Valid: process_exec, process_exit, file_open, net_connect
+        comm_filter: Optional list of exact process names to watch. If omitted, all processes match.
     """
     invalid = set(event_types) - VALID_EVENTS
     if invalid:
@@ -109,25 +127,26 @@ async def subscribe_events(agent_name: str, event_types: list[str], comm_filter:
     if not _watcher or not _behaviors_file:
         return "Watcher not initialized yet"
 
-    # Update routing in watcher
     routing = _watcher._routing
-    if agent_name in routing:
-        routing[agent_name]["subscriptions"] = event_types
-        routing[agent_name]["comm_filter"] = comm_filter or []
-    else:
+    if agent_name not in routing:
         return f"Unknown agent: {agent_name}. Known: {list(routing.keys())}"
 
+    routing[agent_name]["subscriptions"] = event_types
+    routing[agent_name]["comm_filter"] = comm_filter or []
     _watcher.set_routing(routing)
 
-    # Persist to behaviors.json
+    # Persist
     data = json.loads(_behaviors_file.read_text())
     if agent_name in data.get("subagents", {}):
         data["subagents"][agent_name]["subscriptions"] = event_types
         data["subagents"][agent_name]["comm_filter"] = comm_filter or []
         _behaviors_file.write_text(json.dumps(data, indent=2))
 
-    logger.info("agent %s subscribed to %s comm_filter=%s", agent_name, event_types, comm_filter)
-    return f"Subscribed to {event_types}" + (f" with comm_filter={comm_filter}" if comm_filter else "")
+    result = f"Subscribed to {event_types}"
+    if comm_filter:
+        result += f" filtering for commands: {comm_filter}"
+    logger.info("agent %s subscribed: events=%s comm_filter=%s", agent_name, event_types, comm_filter)
+    return result
 
 
 def run_mcp_server(port: int = 4097, nats_url: str = "nats://localhost:4222"):

@@ -243,12 +243,12 @@ def start():
                 _save_behaviors(data)
                 typer.echo(f"  Agent: {name} → session {subagent_session['id']}")
 
-                # Tell the subagent to list events and subscribe
-                typer.echo(f"  Asking {name} to subscribe to events...")
+                # Tell the subagent to discover and subscribe to events
+                typer.echo(f"  Asking {name} to subscribe...")
                 await client.send_message(
                     subagent_session["id"],
-                    "You are now active. First, call list_event_types to see what eBPF events are available. "
-                    "Then call subscribe_events with your agent name and the event types relevant to your behavior. "
+                    "You are now active. First, call list_subscriptions to see all available eBPF event types and filtering options. "
+                    "Then call subscribe with your agent name and the event types + comm filters relevant to your behavior. "
                     f"Your agent name is: {name}",
                     agent=name,
                     provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
