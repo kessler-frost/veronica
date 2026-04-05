@@ -188,8 +188,9 @@ class VeronicaAgent:
         event = msgspec.json.decode(msg.data, type=dict)
         event["_subject"] = msg.subject
 
-        # Drop events whose comm isn't in the filter (if filter is set)
-        if self._comm_filter:
+        # Comm filter only applies to process events — file_open passes on path (Go classifier handles noise)
+        subject = msg.subject
+        if self._comm_filter and subject in ("events.process_exec", "events.process_exit"):
             comm = event.get("data", {}).get("comm", "")
             if comm not in self._comm_filter:
                 return
