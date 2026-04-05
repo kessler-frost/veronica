@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import os
 import subprocess
 from pathlib import Path
 
-import msgspec
-import nats as nats_client
 import typer
-from agno.agent import Agent
 
-from veronica.agents.agent import VeronicaAgent
 from veronica.config import VeronicaConfig
 
 app = typer.Typer(help="Control the Veronica eBPF intelligence layer.")
@@ -85,27 +79,8 @@ def _veronica_already_running() -> bool:
 @app.command()
 def start():
     """Start VM, daemon, and agent. Idempotent."""
-    if _veronica_already_running():
-        typer.echo("Another veronica process is already running. Run `veronica stop` first.", err=True)
-        raise typer.Exit(1)
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
-    if not _vm_running():
-        typer.echo(f"Starting Lima VM {cfg.vm_name!r}...")
-        subprocess.run(["limactl", "start", cfg.vm_name], check=True)
-    else:
-        typer.echo(f"Lima VM {cfg.vm_name!r} already running.")
-
-    typer.echo("Starting daemon...")
-    _vm_shell("sudo", "systemctl", "start", "veronica")
-
-    typer.echo("Starting agent (Ctrl+C to stop)...")
-    agent = VeronicaAgent(cfg=cfg, nats_url=cfg.nats_url)
-    try:
-        asyncio.run(agent.run())
-    except KeyboardInterrupt:
-        typer.echo("Shutting down...")
+    typer.echo("Not yet implemented — pending OpenCode integration.")
+    raise typer.Exit(1)
 
 
 @app.command()
@@ -214,153 +189,24 @@ def vm_ssh():
     os.execv(limactl, ["limactl", "shell", cfg.vm_name])
 
 
-# --- Behavior commands ---
-
-VALID_EVENTS = frozenset({"process_exec", "process_exit", "net_connect", "file_open"})
-
-SUBSCRIPTION_PROMPT = """Given a list of behaviors for an eBPF kernel agent on Ubuntu Linux, return a JSON object with:
-- "events": array of eBPF event types to subscribe to. Valid: process_exec, process_exit, file_open, net_connect
-- "comms": array of command names the agent MUST see to act on ALL the behaviors listed. Be STRICT — only include the exact commands that directly trigger a behavior. No variants, no other-distro tools, no tangentially related commands.
-
-Example for "scaffold projects based on directory creation":
-{"events": ["process_exec"], "comms": ["mkdir", "git", "npm", "uv", "go"]}
-
-Example for "revert dangerous permission changes":
-{"events": ["process_exec"], "comms": ["chmod", "chown"]}
-
-Example for "watch for service crashes":
-{"events": ["process_exit"], "comms": ["nginx", "postgres", "node", "python3"]}
-
-Return ONLY the JSON object, no other text."""
-
-
-async def _resolve_subscriptions(behaviors: list[str]) -> tuple[list[str], list[str]]:
-    """Ask LLM which events and comms the behaviors need. Returns (events, comms)."""
-    model = cfg.build_model()
-    sub_agent = Agent(
-        model=model,
-        instructions=SUBSCRIPTION_PROMPT,
-        markdown=False,
-    )
-    behaviors_text = "\n".join(f"- {b}" for b in behaviors)
-    response = await sub_agent.arun(f"Behaviors:\n{behaviors_text}")
-    content = response.content.strip() if response else "{}"
-
-    json_start = content.find("{")
-    json_end = content.rfind("}") + 1
-    if json_start >= 0 and json_end > 0:
-        result = msgspec.json.decode(content[json_start:json_end].encode(), type=dict)
-        events = [e for e in result.get("events", []) if e in VALID_EVENTS]
-        comms = result.get("comms", [])
-        return events, comms
-
-    return [], []
-
+# --- Behavior commands (stubs — pending OpenCode integration) ---
 
 @app.command()
 def add(description: str = typer.Argument(help="Natural language behavior description")):
     """Add a behavior to Veronica."""
-
-    async def _add():
-        nc = await nats_client.connect(cfg.nats_url)
-        js = nc.jetstream()
-        kv = await js.key_value("agents")
-
-        try:
-            entry = await kv.get("veronica")
-            config = msgspec.json.decode(entry.value, type=dict)
-        except Exception:
-            config = {"behaviors": [], "subscriptions": [], "comm_filter": []}
-
-        config["behaviors"].append(description)
-
-        events, comms = await _resolve_subscriptions(config["behaviors"])
-        config["subscriptions"] = sorted(set(config.get("subscriptions", []) + events))
-        config["comm_filter"] = sorted(set(config.get("comm_filter", []) + comms))
-
-        await kv.put("veronica", msgspec.json.encode(config))
-        await nc.close()
-
-        typer.echo(f"Added: {description}")
-        typer.echo(f"  Subscriptions: {config['subscriptions']}")
-        typer.echo(f"  Watching: {config['comm_filter']}")
-        typer.echo(f"  Total behaviors: {len(config['behaviors'])}")
-
-    asyncio.run(_add())
+    typer.echo("Not yet implemented — pending OpenCode integration.")
+    raise typer.Exit(1)
 
 
 @app.command("list")
 def list_behaviors():
     """List all behaviors."""
-
-    async def _list():
-        nc = await nats_client.connect(cfg.nats_url)
-        js = nc.jetstream()
-        kv = await js.key_value("agents")
-
-        try:
-            entry = await kv.get("veronica")
-            config = msgspec.json.decode(entry.value, type=dict)
-        except Exception:
-            typer.echo("No behaviors configured. Run `veronica add \"...\"` to add one.")
-            await nc.close()
-            return
-
-        typer.echo(f"Subscriptions: {config.get('subscriptions', [])}")
-        typer.echo(f"Watching: {config.get('comm_filter', [])}")
-        typer.echo(f"Behaviors ({len(config.get('behaviors', []))}):")
-        for i, b in enumerate(config.get("behaviors", []), 1):
-            typer.echo(f"  {i}. {b}")
-
-        await nc.close()
-
-    asyncio.run(_list())
+    typer.echo("Not yet implemented — pending OpenCode integration.")
+    raise typer.Exit(1)
 
 
 @app.command()
 def rm(description: str = typer.Argument(help="Behavior text to remove (partial match)")):
     """Remove a behavior."""
-
-    async def _rm():
-        nc = await nats_client.connect(cfg.nats_url)
-        js = nc.jetstream()
-        kv = await js.key_value("agents")
-
-        try:
-            entry = await kv.get("veronica")
-            config = msgspec.json.decode(entry.value, type=dict)
-        except Exception:
-            typer.echo("No behaviors configured.")
-            await nc.close()
-            return
-
-        behaviors = config.get("behaviors", [])
-        matches = [b for b in behaviors if description.lower() in b.lower()]
-
-        if not matches:
-            typer.echo(f"No behavior matching '{description}'")
-            await nc.close()
-            return
-
-        for m in matches:
-            behaviors.remove(m)
-            typer.echo(f"Removed: {m}")
-
-        config["behaviors"] = behaviors
-
-        if behaviors:
-            events, comms = await _resolve_subscriptions(behaviors)
-            config["subscriptions"] = events
-            config["comm_filter"] = comms
-        else:
-            config["subscriptions"] = []
-            config["comm_filter"] = []
-
-        await kv.put("veronica", msgspec.json.encode(config))
-        await nc.close()
-
-        typer.echo(f"  Subscriptions: {config['subscriptions']}")
-        typer.echo(f"  Watching: {config.get('comm_filter', [])}")
-        typer.echo(f"  Remaining behaviors: {len(behaviors)}")
-
-    asyncio.run(_rm())
+    typer.echo("Not yet implemented — pending OpenCode integration.")
+    raise typer.Exit(1)

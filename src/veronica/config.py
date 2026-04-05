@@ -1,13 +1,8 @@
 """Veronica configuration."""
 
-from agno.models.lmstudio import LMStudio
-from agno.models.openrouter import OpenRouter
-from pydantic_settings import BaseSettings
+from pathlib import Path
 
-PROVIDERS = {
-    "openrouter": lambda cfg: OpenRouter(id=cfg.openrouter_model, temperature=0.0),
-    "lmstudio": lambda cfg: LMStudio(id=cfg.llm_model, base_url=cfg.llm_base_url, temperature=0.0),
-}
+from pydantic_settings import BaseSettings
 
 
 class VeronicaConfig(BaseSettings):
@@ -19,10 +14,18 @@ class VeronicaConfig(BaseSettings):
     daemon_pkg: str = "./cmd/veronicad/"
     daemon_install_path: str = "/usr/local/bin/veronicad"
     vm_project_path: str = "/home/fimbulwinter.linux/veronica"
-    llm_provider: str = "lmstudio"  # "lmstudio" or "openrouter"
-    llm_base_url: str = "http://localhost:1234/v1"
-    llm_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
-    openrouter_model: str = "openai/gpt-5.4-nano"
+    opencode_port: int = 4096
+    mcp_port: int = 4097
+    veronica_dir: Path = Path.home() / ".veronica"
 
-    def build_model(self):
-        return PROVIDERS[self.llm_provider](self)
+    @property
+    def opencode_url(self) -> str:
+        return f"http://localhost:{self.opencode_port}"
+
+    @property
+    def opencode_config_dir(self) -> Path:
+        return self.veronica_dir / ".opencode"
+
+    @property
+    def behaviors_file(self) -> Path:
+        return self.veronica_dir / "behaviors.json"
