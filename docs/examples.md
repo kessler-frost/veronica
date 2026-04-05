@@ -108,15 +108,15 @@ Real-world examples of how Veronica adds value to daily workflows. Each scenario
 
 | # | Scenario | Status |
 |---|---|---|
-| 1 | Project scaffolding | Not tested |
-| 2 | Git clone auto-setup | Not tested |
-| 3 | Crash recovery | Not tested |
-| 4 | Dangerous chmod | Not tested |
-| 5 | curl auto-extract | Not tested |
-| 6 | Docker guardrails | Not tested |
-| 7 | SSH key hardening | Not tested |
-| 8 | Repeated command alias | Not tested |
-| 9 | Config auto-validate | Not tested |
-| 10 | Package security scan | Not tested |
+| 1 | Project scaffolding | Tested — FastAPI, Go, Express all scaffold correctly |
+| 2 | Git clone auto-setup | Tested — detected pyproject.toml, ran uv sync |
+| 3 | Crash recovery | Tested — detected nginx crash, checked logs + status |
+| 4 | Dangerous chmod | Tested — detected chmod 777, reverted to 640, verified |
+| 5 | curl auto-extract | Not tested — needs curl agent |
+| 6 | Docker guardrails | Not tested — needs docker agent |
+| 7 | SSH key hardening | Tested — replaced RSA with ed25519, set permissions |
+| 8 | Repeated command alias | Not tested — needs pattern detection over time |
+| 9 | Config auto-validate | Not tested — needs file_open probe |
+| 10 | Package security scan | Tested — detected typosquat "reqeusts", tried to kill install |
 
-All scenarios use NATS tool responders (`tools.exec`) for actions and per-agent context prompts for behavior.
+All scenarios use NATS tool responders (`tools.exec`) for actions and per-agent context prompts for behavior. Agents created via `veronica agent add` with natural language, LLM powered by OpenRouter (qwen/qwen3.6-plus).
