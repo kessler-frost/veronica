@@ -2,10 +2,12 @@
 
 // SPDX-License-Identifier: GPL-2.0
 //
-// LSM enforcement: deny file open and socket connect based on policy maps.
-// Userspace (coordinator) writes policy entries; kernel enforces at call time.
+// TODO: Not yet compiled or loaded. Requires CONFIG_BPF_LSM=y and "bpf" in
+// /sys/kernel/security/lsm (boot param change). Will replace shell-based
+// enforce tool (chmod/iptables) with kernel-speed map lookups.
 //
-// Requires CONFIG_BPF_LSM=y and "bpf" in /sys/kernel/security/lsm.
+// LSM enforcement: deny file open and socket connect based on policy maps.
+// Daemon writes policy entries; kernel enforces at call time.
 
 #include "common.h"
 

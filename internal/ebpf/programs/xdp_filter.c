@@ -2,12 +2,12 @@
 
 // SPDX-License-Identifier: GPL-2.0
 //
+// TODO: Not yet compiled or loaded. Will replace shell-based iptables
+// enforcement with wire-speed XDP packet filtering.
+//
 // XDP packet filter: drop packets from/to blocked IPv4 addresses before they
 // reach the kernel network stack. Runs at the NIC driver level for minimum
-// overhead. Userspace populates vr_xdp_blocklist; the kernel drops at wire speed.
-//
-// Attach to an interface with: ip link set dev <iface> xdp obj xdp_filter.o sec xdp
-// or via cilium/ebpf link.AttachXDP.
+// overhead. Daemon populates vr_xdp_blocklist; the kernel drops at wire speed.
 
 #include "common.h"
 #include <bpf/bpf_endian.h>

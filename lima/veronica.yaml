@@ -16,9 +16,3 @@ provision:
       apt-get install -y clang llvm libbpf-dev linux-tools-common \
         linux-tools-$(uname -r) linux-headers-$(uname -r) golang git make
       echo 'GOTOOLCHAIN=auto' >> /etc/environment
-      # Enable BPF LSM for eBPF enforcement programs
-      if ! grep -q 'bpf' /sys/kernel/security/lsm; then
-        current=$(cat /sys/kernel/security/lsm)
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"lsm=${current},bpf\"|" /etc/default/grub
-        update-grub
-      fi

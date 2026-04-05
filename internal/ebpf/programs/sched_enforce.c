@@ -2,6 +2,9 @@
 
 // SPDX-License-Identifier: GPL-2.0
 //
+// TODO: Not yet compiled or loaded. Requires CONFIG_SCHED_CLASS_EXT=y.
+// Will replace shell-based renice with eBPF-native per-PID scheduling.
+//
 // sched_ext priority scheduler skeleton.
 //
 // Reads per-PID priority from vr_sched_priority; higher values mean the process
