@@ -44,6 +44,9 @@ type Classifier struct {
 	// SilentPrefixes are comm prefixes for system daemons.
 	SilentPrefixes []string
 
+	// SilentComms are individual commands that are always noise.
+	SilentComms map[string]bool
+
 	// SensitivePaths trigger urgent agents when touched.
 	SensitivePaths map[string]bool
 
@@ -66,6 +69,18 @@ func New() *Classifier {
 			"systemd-", "dbus-", "lima-",
 			"gsd-", "gdm-", "gnome-", "xdg-",
 			"podman-", "containerd-",
+		},
+
+		// SilentComms are individual commands that are always noise.
+		SilentComms: map[string]bool{
+			"grep": true, "grepconf.sh": true, "sed": true,
+			"find": true, "xargs": true, "tr": true, "cat": true,
+			"tty": true, "locale": true, "id": true, "hostnamectl": true,
+			"head": true, "tail": true, "wc": true, "sort": true,
+			"cut": true, "awk": true, "basename": true, "dirname": true,
+			"test": true, "true": true, "false": true, "sleep": true,
+			"env": true, "printenv": true, "which": true, "whoami": true,
+			"date": true, "seq": true, "expr": true,
 		},
 
 		SensitivePaths: map[string]bool{
@@ -96,7 +111,7 @@ func (c *Classifier) Classify(e event.Event) EventCategory {
 	defer c.mu.RUnlock()
 
 	// Self
-	if c.SelfComms[comm] {
+	if c.SelfComms[comm] || c.SilentComms[comm] {
 		return CategorySilent
 	}
 

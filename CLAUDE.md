@@ -10,6 +10,7 @@
 - **Host Agents** (Python, run on macOS host): connect to daemon via NATS, subscribe to event types, run LLM loops (any harness). Created from natural language via `veronica agent add`.
 - **NATS** replaces WebSocket + buntdb. Events stream (5min TTL), KV buckets for agents/tasks/policies/logs.
 - **Why not SSH**: daemon holds live eBPF map/program file descriptors. The daemon IS the eBPF runtime.
+- **Noise filtering**: TEMPORARY — hardcoded silent command lists in Go classifier + Python agent. Will be replaced with smarter approach (LLM-based, frequency-based, or eBPF map-driven).
 - **Design specs**: `docs/superpowers/specs/2026-04-03-veronica-design.md`, `docs/superpowers/specs/2026-04-04-two-step-model-design.md`
 
 ## CLI (use this, not raw limactl)
