@@ -219,18 +219,18 @@ def vm_ssh():
 
 VALID_EVENTS = frozenset({"process_exec", "process_exit", "net_connect", "file_open"})
 
-SUBSCRIPTION_PROMPT = """Given a list of behaviors for an eBPF kernel agent, return a JSON object with:
+SUBSCRIPTION_PROMPT = """Given a list of behaviors for an eBPF kernel agent on Ubuntu Linux, return a JSON object with:
 - "events": array of eBPF event types to subscribe to. Valid: process_exec, process_exit, file_open, net_connect
-- "comms": array of command names (process names) that are relevant to these behaviors
+- "comms": array of ONLY the command names directly relevant to these behaviors. Be minimal — only include commands the agent must see to act. Do NOT include every possible variant or package manager on other distros.
 
 Example for "scaffold projects based on directory creation":
-{"events": ["process_exec"], "comms": ["mkdir", "git", "npm", "uv", "cargo", "bun", "go", "pip"]}
+{"events": ["process_exec"], "comms": ["mkdir", "git", "npm", "uv", "go"]}
 
 Example for "revert dangerous permission changes":
-{"events": ["process_exec"], "comms": ["chmod", "chown", "chgrp"]}
+{"events": ["process_exec"], "comms": ["chmod", "chown"]}
 
 Example for "watch for service crashes and restart them":
-{"events": ["process_exit"], "comms": ["nginx", "postgres", "redis-server", "node", "python3", "gunicorn"]}
+{"events": ["process_exit"], "comms": ["nginx", "postgres", "node", "python3"]}
 
 Return ONLY the JSON object, no other text."""
 
