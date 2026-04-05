@@ -14,7 +14,7 @@ from pathlib import Path
 import typer
 
 from veronica.config import VeronicaConfig
-from veronica.mcp_server import run_mcp_server
+from veronica.mcp_server import run_mcp_server, set_watcher
 from veronica.opencode import OpenCodeClient
 from veronica.watcher import EventWatcher
 
@@ -45,10 +45,6 @@ mode: subagent
 
 When asked to remove a behavior, delete the .opencode/agents/<name>.md file.
 
-After creating each subagent, report back with this exact JSON on a single line:
-VERONICA_CONFIG:{"name":"<name>","subscriptions":["process_exec"],"comm_filter":["mkdir","git"]}
-
-This lets the host service know how to route events to your subagent.
 """
 
 
@@ -198,6 +194,14 @@ def start():
         client = OpenCodeClient(base_url=cfg.opencode_url)
         data = _load_behaviors()
 
+        # Create watcher early so MCP subscribe_events tool can update routing
+        watcher = EventWatcher(
+            nats_url=cfg.nats_url, opencode=client,
+            provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
+        )
+        watcher.set_routing(data.get("subagents", {}))
+        set_watcher(watcher, cfg.behaviors_file)
+
         # For each behavior that doesn't have a subagent session yet, create one
         for behavior in data.get("behaviors", []):
             # Check if we already have a subagent for this behavior
@@ -209,7 +213,12 @@ def start():
                 typer.echo(f"Subagent already exists: {matching[0]}")
                 continue
 
-            # Use creator agent to write the .md file and get config
+            # Snapshot existing agent files
+            agents_dir = Path(".opencode/agents")
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            existing_agents = {f.stem for f in agents_dir.glob("*.md")}
+
+            # Use creator session to write the .md file
             typer.echo(f"Creating agent for: {behavior}")
             creator_session = await client.create_session()
             await client.send_message_and_wait(
@@ -218,29 +227,36 @@ def start():
                 provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
             )
 
-            # Parse VERONICA_CONFIG from the creator's response
-            messages = await client.get_messages(creator_session["id"])
-            config = _parse_veronica_config(messages)
-
-            if config:
-                # Create a standalone session for this subagent
+            # Find the new .md file the creator wrote
+            new_agents = {f.stem for f in agents_dir.glob("*.md")} - existing_agents
+            if new_agents:
+                name = new_agents.pop()
                 subagent_session = await client.create_session()
-                config["session_id"] = subagent_session["id"]
-                config["behavior"] = behavior
-                data.setdefault("subagents", {})[config["name"]] = config
+                config = {
+                    "name": name,
+                    "session_id": subagent_session["id"],
+                    "behavior": behavior,
+                    "subscriptions": [],
+                    "comm_filter": [],
+                }
+                data.setdefault("subagents", {})[name] = config
                 _save_behaviors(data)
-                typer.echo(f"  Agent: {config['name']} → session {subagent_session['id']}")
-                typer.echo(f"  Subscriptions: {config.get('subscriptions', [])}")
-                typer.echo(f"  Comm filter: {config.get('comm_filter', [])}")
-            else:
-                typer.echo(f"  WARNING: No VERONICA_CONFIG returned for: {behavior}")
+                typer.echo(f"  Agent: {name} → session {subagent_session['id']}")
 
-        # Start event watcher with routing table
-        watcher = EventWatcher(
-            nats_url=cfg.nats_url, opencode=client,
-            provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
-        )
-        watcher.set_routing(data.get("subagents", {}))
+                # Tell the subagent to list events and subscribe
+                typer.echo(f"  Asking {name} to subscribe to events...")
+                await client.send_message(
+                    subagent_session["id"],
+                    "You are now active. First, call list_event_types to see what eBPF events are available. "
+                    "Then call subscribe_events with your agent name and the event types relevant to your behavior. "
+                    f"Your agent name is: {name}",
+                    agent=name,
+                    provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
+                )
+            else:
+                typer.echo(f"  WARNING: No agent file created for: {behavior}")
+
+        # Start event watcher (already created above, routing may have been updated by subscribe_events)
         await watcher.start()
 
         typer.echo(f"Veronica running with {len(data.get('subagents', {}))} subagents (Ctrl+C to stop)...")
