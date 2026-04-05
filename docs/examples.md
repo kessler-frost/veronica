@@ -119,4 +119,4 @@ Real-world examples of how Veronica adds value to daily workflows. Each scenario
 | 9 | Config auto-validate | Tested — validated nginx.conf with nginx -t, reloaded service |
 | 10 | Package security scan | Tested — detected typosquat "reqeusts", killed install |
 
-All scenarios use NATS tool responders (`tools.exec`) for actions and per-agent context prompts for behavior. Agents created via `veronica agent add` with natural language, LLM powered by OpenRouter (openai/gpt-5.4-nano).
+All scenarios use NATS tool responders (`tools.exec`) for actions. Single agent with accumulated behaviors via `veronica add`. LLM powered by OpenRouter (openai/gpt-5.4-nano).
