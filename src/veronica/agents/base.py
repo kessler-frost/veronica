@@ -9,8 +9,6 @@ from abc import ABC, abstractmethod
 import msgspec
 import nats
 from agno.agent import Agent
-from agno.models.lmstudio import LMStudio
-from agno.models.openrouter import OpenRouter
 from nats.aio.client import Client as NATSClient
 
 logger = logging.getLogger(__name__)
@@ -39,19 +37,13 @@ class BaseAgent(ABC):
         self,
         agent_id: str,
         nats_url: str = "nats://localhost:4222",
-        llm_provider: str = "openrouter",
-        llm_base_url: str = "http://localhost:1234",
-        llm_model: str = "",
-        openrouter_model: str = "qwen/qwen3.6-plus:free",
+        model=None,
         llm_semaphore: asyncio.Semaphore | None = None,
         event_filter: dict | None = None,
     ):
         self.agent_id = agent_id
         self.nats_url = nats_url
-        self._llm_provider = llm_provider
-        self._llm_base_url = llm_base_url
-        self._llm_model = llm_model
-        self._openrouter_model = openrouter_model
+        self._model = model
         self._llm_semaphore = llm_semaphore or asyncio.Semaphore(1)
         self._filter: dict = event_filter or {}
         self._nc: NATSClient | None = None
@@ -139,13 +131,8 @@ class BaseAgent(ABC):
             logger.info("[%s] TOOL final_answer: %s", self.agent_id, summary[:200])
             return summary
 
-        if self._llm_provider == "openrouter":
-            model = OpenRouter(id=self._openrouter_model, temperature=0.0)
-        else:
-            model = LMStudio(id=self._llm_model, base_url=self._llm_base_url, temperature=0.0)
-
         return Agent(
-            model=model,
+            model=self._model,
             instructions=instructions,
             tools=[exec_command, enforce, transform, schedule, measure, kv_get, kv_put, kv_keys, final_answer],
             telemetry=False,

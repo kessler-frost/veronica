@@ -6,8 +6,6 @@ import logging
 
 import msgspec
 from agno.agent import Agent
-from agno.models.lmstudio import LMStudio
-from agno.models.openrouter import OpenRouter
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +35,11 @@ User: "watch for service crashes and auto-restart them"
 VALID_EVENTS = frozenset({"process_exec", "process_exit", "net_connect", "file_open"})
 
 
-async def create_agent_config(
-    description: str,
-    llm_provider: str = "openrouter",
-    llm_base_url: str = "http://localhost:1234/v1",
-    llm_model: str = "",
-    openrouter_model: str = "qwen/qwen3.6-plus:free",
-) -> dict:
+async def create_agent_config(description: str, model) -> dict:
     """Translate natural language into agent config via LLM.
 
     Returns dict with keys: name, events, context
     """
-    if llm_provider == "openrouter":
-        model = OpenRouter(id=openrouter_model, temperature=0.0)
-    else:
-        model = LMStudio(id=llm_model, base_url=llm_base_url, temperature=0.0)
-
     agent = Agent(
         model=model,
         instructions=CREATOR_PROMPT,

@@ -1,6 +1,13 @@
 """Veronica configuration."""
 
+from agno.models.lmstudio import LMStudio
+from agno.models.openrouter import OpenRouter
 from pydantic_settings import BaseSettings
+
+PROVIDERS = {
+    "openrouter": lambda cfg: OpenRouter(id=cfg.openrouter_model, temperature=0.0),
+    "lmstudio": lambda cfg: LMStudio(id=cfg.llm_model, base_url=cfg.llm_base_url, temperature=0.0),
+}
 
 
 class VeronicaConfig(BaseSettings):
@@ -17,3 +24,6 @@ class VeronicaConfig(BaseSettings):
     llm_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
     openrouter_model: str = "qwen/qwen3.6-plus:free"
     max_concurrent_agents: int = 1
+
+    def build_model(self):
+        return PROVIDERS[self.llm_provider](self)
