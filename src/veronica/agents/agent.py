@@ -244,9 +244,10 @@ class VeronicaAgent:
         for key, group in unique_events.items():
             first = group[0]
             data = first.get("data", {})
+            detail = data.get("cmdline", "") or data.get("filename", "") or data.get("daddr", "")
             batch_lines.append(
                 f"  [{first.get('_subject', '')}] {data.get('comm', '')} "
-                f"{data.get('cmdline', data.get('daddr', ''))} "
+                f"{detail} "
                 f"(x{len(group)} events)"
             )
         batch_context = "\n".join(batch_lines)
