@@ -2,20 +2,44 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import typer
 
 from veronica.config import VeronicaConfig
+from veronica.mcp_server import run_mcp_server
+from veronica.opencode import OpenCodeClient
+from veronica.watcher import EventWatcher
 
 app = typer.Typer(help="Control the Veronica eBPF intelligence layer.")
 vm_app = typer.Typer(help="Manage the Lima VM lifecycle.")
 app.add_typer(vm_app, name="vm")
 
 cfg = VeronicaConfig()
+
+MAIN_AGENT_PROMPT = """You are the Veronica orchestrator. You manage subagents that handle eBPF kernel events on a Linux VM.
+
+When asked to add a behavior:
+1. Determine which eBPF event types the subagent needs (process_exec, process_exit, file_open, net_connect)
+2. Determine which command names (comms) are relevant — be strict, only exact commands that trigger the behavior
+3. Write an agent markdown file using the write tool
+4. Spawn the subagent
+
+When asked to remove a behavior, kill the corresponding subagent.
+
+When asked to list behaviors, describe the current subagents and their configurations.
+
+Pay attention to paths in events. When acting on a file or directory, work in the same location.
+If a tool or dependency is missing, install it and continue.
+You run as root in the VM.
+"""
 
 
 def _vm_running() -> bool:
@@ -36,39 +60,32 @@ def _sync_to_vm():
     host_root = Path(__file__).resolve().parents[3]
     vm_path = cfg.vm_project_path
     _vm_shell("mkdir", "-p", vm_path)
-    # Copy Go source, eBPF programs, configs — exclude .git, __pycache__, etc.
-    subprocess.run([
-        "limactl", "cp", "-r",
-        f"{host_root}/cmd", f"{cfg.vm_name}:{vm_path}/cmd",
-    ], check=True)
-    subprocess.run([
-        "limactl", "cp", "-r",
-        f"{host_root}/internal", f"{cfg.vm_name}:{vm_path}/internal",
-    ], check=True)
+    subprocess.run(["limactl", "cp", "-r", f"{host_root}/cmd", f"{cfg.vm_name}:{vm_path}/cmd"], check=True)
+    subprocess.run(["limactl", "cp", "-r", f"{host_root}/internal", f"{cfg.vm_name}:{vm_path}/internal"], check=True)
     for f in ["go.mod", "go.sum"]:
         src = host_root / f
         if src.exists():
-            subprocess.run([
-                "limactl", "cp", str(src), f"{cfg.vm_name}:{vm_path}/{f}",
-            ], check=True)
-    # Copy lima service file
+            subprocess.run(["limactl", "cp", str(src), f"{cfg.vm_name}:{vm_path}/{f}"], check=True)
     service = host_root / "lima" / "veronica.service"
     if service.exists():
         _vm_shell("mkdir", "-p", f"{vm_path}/lima")
-        subprocess.run([
-            "limactl", "cp", str(service), f"{cfg.vm_name}:{vm_path}/lima/veronica.service",
-        ], check=True)
+        subprocess.run(["limactl", "cp", str(service), f"{cfg.vm_name}:{vm_path}/lima/veronica.service"], check=True)
 
 
-# --- Top-level commands ---
+def _load_behaviors() -> dict:
+    if cfg.behaviors_file.exists():
+        return json.loads(cfg.behaviors_file.read_text())
+    return {"behaviors": [], "subagents": {}, "session_id": None}
+
+
+def _save_behaviors(data: dict) -> None:
+    cfg.veronica_dir.mkdir(parents=True, exist_ok=True)
+    cfg.behaviors_file.write_text(json.dumps(data, indent=2))
+
 
 def _veronica_already_running() -> bool:
-    """Check if another veronica start process is already running."""
     our_pid = os.getpid()
-    result = subprocess.run(
-        ["pgrep", "-f", "veronica start"],
-        capture_output=True, text=True,
-    )
+    result = subprocess.run(["pgrep", "-f", "veronica start"], capture_output=True, text=True)
     for line in result.stdout.strip().splitlines():
         pid = int(line.strip())
         if pid != our_pid:
@@ -76,11 +93,117 @@ def _veronica_already_running() -> bool:
     return False
 
 
+def _setup_opencode_config():
+    """Create ~/.veronica/.opencode/ with MCP config and main agent."""
+    oc_dir = cfg.opencode_config_dir
+    agents_dir = oc_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    # opencode.json — MCP server config
+    oc_config = {
+        "mcp": {
+            "veronica": {
+                "type": "remote",
+                "url": f"http://localhost:{cfg.mcp_port}/mcp",
+            }
+        }
+    }
+    (oc_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2))
+
+    # Main agent
+    main_agent = f"""---
+description: Veronica orchestrator — spawns and manages subagents for eBPF behaviors
+mode: primary
+---
+
+{MAIN_AGENT_PROMPT}
+"""
+    (agents_dir / "main.md").write_text(main_agent)
+
+
+# --- Top-level commands ---
+
 @app.command()
 def start():
-    """Start VM, daemon, and agent. Idempotent."""
-    typer.echo("Not yet implemented — pending OpenCode integration.")
-    raise typer.Exit(1)
+    """Start VM, daemon, MCP server, OpenCode, and event watcher."""
+    if _veronica_already_running():
+        typer.echo("Another veronica process is already running. Run `veronica stop` first.", err=True)
+        raise typer.Exit(1)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    if not _vm_running():
+        typer.echo(f"Starting Lima VM {cfg.vm_name!r}...")
+        subprocess.run(["limactl", "start", cfg.vm_name], check=True)
+    else:
+        typer.echo(f"Lima VM {cfg.vm_name!r} already running.")
+
+    typer.echo("Starting daemon...")
+    _vm_shell("sudo", "systemctl", "start", "veronica")
+
+    # Setup OpenCode config
+    _setup_opencode_config()
+
+    # Start MCP server in background thread
+    typer.echo(f"Starting MCP server on port {cfg.mcp_port}...")
+    mcp_thread = threading.Thread(target=run_mcp_server, args=(cfg.mcp_port, cfg.nats_url), daemon=True)
+    mcp_thread.start()
+
+    # Start OpenCode headless
+    typer.echo("Starting OpenCode server...")
+    env = os.environ.copy()
+    env["OPENCODE_DIR"] = str(cfg.opencode_config_dir)
+    oc_proc = subprocess.Popen(
+        ["opencode", "serve", "--port", str(cfg.opencode_port)],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    time.sleep(3)  # Wait for OpenCode server to start
+
+    async def _run():
+        client = OpenCodeClient(base_url=cfg.opencode_url)
+
+        # Create main session
+        data = _load_behaviors()
+        session = await client.create_session()
+        data["session_id"] = session["id"]
+        _save_behaviors(data)
+
+        typer.echo(f"OpenCode session: {session['id']}")
+
+        # Send initial system prompt
+        await client.send_message(session["id"], MAIN_AGENT_PROMPT)
+
+        # Replay stored behaviors
+        for behavior in data.get("behaviors", []):
+            typer.echo(f"Replaying: {behavior}")
+            await client.send_message(
+                session["id"],
+                f"Create and spawn a new subagent for this behavior: {behavior}",
+            )
+
+        # Start event watcher
+        watcher = EventWatcher(nats_url=cfg.nats_url, opencode=client)
+        watcher.set_routing(data.get("subagents", {}))
+        await watcher.start()
+
+        typer.echo("Veronica running (Ctrl+C to stop)...")
+        stop = asyncio.Event()
+        try:
+            await stop.wait()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await watcher.stop()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        typer.echo("Shutting down...")
+    finally:
+        oc_proc.terminate()
 
 
 @app.command()
@@ -93,6 +216,8 @@ def stop():
         if pid != our_pid:
             os.kill(pid, 9)
             typer.echo(f"Stopped Veronica (pid {pid})")
+    # Kill OpenCode server
+    subprocess.run(["pkill", "-f", "opencode serve"], capture_output=True)
     typer.echo("Stopping daemon...")
     _vm_shell("sudo", "systemctl", "stop", "veronica")
 
@@ -160,8 +285,7 @@ def setup():
 
 @vm_app.command("start")
 def vm_start():
-    """Start the Lima VM. Creates from lima config if it doesn't exist."""
-    # Check if instance exists
+    """Start the Lima VM."""
     result = subprocess.run(["limactl", "list", "--json"], capture_output=True, text=True)
     exists = any(
         json.loads(line).get("name") == cfg.vm_name
@@ -189,24 +313,77 @@ def vm_ssh():
     os.execv(limactl, ["limactl", "shell", cfg.vm_name])
 
 
-# --- Behavior commands (stubs — pending OpenCode integration) ---
+# --- Behavior commands ---
 
 @app.command()
 def add(description: str = typer.Argument(help="Natural language behavior description")):
     """Add a behavior to Veronica."""
-    typer.echo("Not yet implemented — pending OpenCode integration.")
-    raise typer.Exit(1)
+    data = _load_behaviors()
+    data["behaviors"].append(description)
+    _save_behaviors(data)
+
+    session_id = data.get("session_id")
+    if session_id:
+        async def _add():
+            client = OpenCodeClient(base_url=cfg.opencode_url)
+            await client.send_message(
+                session_id,
+                f"Create and spawn a new subagent for this behavior: {description}",
+            )
+        asyncio.run(_add())
+        typer.echo(f"Added and spawned: {description}")
+    else:
+        typer.echo(f"Added: {description} (will spawn on next `veronica start`)")
 
 
 @app.command("list")
 def list_behaviors():
     """List all behaviors."""
-    typer.echo("Not yet implemented — pending OpenCode integration.")
-    raise typer.Exit(1)
+    data = _load_behaviors()
+    behaviors = data.get("behaviors", [])
+    subagents = data.get("subagents", {})
+
+    if not behaviors:
+        typer.echo("No behaviors configured. Run `veronica add \"...\"` to add one.")
+        return
+
+    typer.echo(f"Behaviors ({len(behaviors)}):")
+    for i, b in enumerate(behaviors, 1):
+        typer.echo(f"  {i}. {b}")
+
+    if subagents:
+        typer.echo(f"\nSubagents ({len(subagents)}):")
+        for name, config in subagents.items():
+            subs = config.get("subscriptions", [])
+            comms = config.get("comm_filter", [])
+            typer.echo(f"  {name}: events={subs} comms={comms}")
 
 
 @app.command()
 def rm(description: str = typer.Argument(help="Behavior text to remove (partial match)")):
     """Remove a behavior."""
-    typer.echo("Not yet implemented — pending OpenCode integration.")
-    raise typer.Exit(1)
+    data = _load_behaviors()
+    behaviors = data.get("behaviors", [])
+    matches = [b for b in behaviors if description.lower() in b.lower()]
+
+    if not matches:
+        typer.echo(f"No behavior matching '{description}'")
+        return
+
+    for m in matches:
+        behaviors.remove(m)
+        typer.echo(f"Removed: {m}")
+
+    data["behaviors"] = behaviors
+    _save_behaviors(data)
+
+    session_id = data.get("session_id")
+    if session_id:
+        async def _rm():
+            client = OpenCodeClient(base_url=cfg.opencode_url)
+            for m in matches:
+                await client.send_message(
+                    session_id,
+                    f"Kill the subagent that handles this behavior: {m}",
+                )
+        asyncio.run(_rm())
