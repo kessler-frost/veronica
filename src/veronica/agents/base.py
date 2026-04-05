@@ -22,6 +22,8 @@ ALWAYS follow this loop:
 
 NEVER just investigate (ls, cat) without following up with real action. If you see a new directory was created, scaffold it. If you see a crash, fix it. If you see something suspicious, enforce a policy.
 
+If a tool or dependency is missing, install it yourself and continue with the original task.
+
 You run as root.
 """
 

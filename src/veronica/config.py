@@ -22,7 +22,7 @@ class VeronicaConfig(BaseSettings):
     llm_provider: str = "openrouter"  # "lmstudio" or "openrouter"
     llm_base_url: str = "http://localhost:1234/v1"
     llm_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
-    openrouter_model: str = "inception/mercury-2"
+    openrouter_model: str = "openai/gpt-5.4-nano"
     max_concurrent_agents: int = 1
 
     def build_model(self):
