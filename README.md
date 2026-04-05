@@ -34,4 +34,4 @@ uv run veronica add "revert dangerous permission changes on sensitive files"
 uv run veronica start
 ```
 
-Requires: macOS (Apple Silicon) or Linux, [uv](https://docs.astral.sh/uv/), [Lima](https://lima-vm.io/), and [LM Studio](https://lmstudio.ai/) for local inference. For cloud models, set `VERONICA_LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`.
+Requires: macOS (Apple Silicon) or Linux, [uv](https://docs.astral.sh/uv/), [Lima](https://lima-vm.io/), and [OpenCode](https://opencode.ai/) with an LLM provider configured.
