@@ -251,12 +251,12 @@ class BaseAgent(ABC):
             self._processing = False
             return
 
-        # Deduplicate by semantic key — skip in_progress AND recently done tasks
+        # Deduplicate by semantic key — only skip in_progress tasks (not done)
         unique_events: dict[str, list[dict]] = {}
         for event in events:
             key = self._semantic_key(event)
             existing = await self._kv_get("tasks", key)
-            if existing and existing.get("status") in ("in_progress", "done"):
+            if existing and existing.get("status") == "in_progress":
                 continue
             unique_events.setdefault(key, []).append(event)
 
