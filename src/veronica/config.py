@@ -16,6 +16,8 @@ class VeronicaConfig(BaseSettings):
     vm_project_path: str = "/home/fimbulwinter.linux/veronica"
     opencode_port: int = 4096
     mcp_port: int = 4097
+    opencode_provider: str = "openrouter"
+    opencode_model: str = "openai/gpt-5.4-nano"
     veronica_dir: Path = Path.home() / ".veronica"
 
     @property

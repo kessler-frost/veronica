@@ -99,14 +99,19 @@ def _setup_opencode_config():
     agents_dir = oc_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # opencode.json — MCP server config
+    # opencode.json — MCP + provider config
     oc_config = {
+        "provider": {
+            "openrouter": {
+                "api_key": os.environ.get("OPENROUTER_API_KEY", ""),
+            }
+        },
         "mcp": {
             "veronica": {
                 "type": "remote",
                 "url": f"http://localhost:{cfg.mcp_port}/mcp",
             }
-        }
+        },
     }
     (oc_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2))
 
@@ -174,7 +179,10 @@ def start():
         typer.echo(f"OpenCode session: {session['id']}")
 
         # Send initial system prompt
-        await client.send_message(session["id"], MAIN_AGENT_PROMPT)
+        await client.send_message(
+            session["id"], MAIN_AGENT_PROMPT,
+            provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
+        )
 
         # Replay stored behaviors
         for behavior in data.get("behaviors", []):
@@ -182,10 +190,14 @@ def start():
             await client.send_message(
                 session["id"],
                 f"Create and spawn a new subagent for this behavior: {behavior}",
+                provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
             )
 
         # Start event watcher
-        watcher = EventWatcher(nats_url=cfg.nats_url, opencode=client)
+        watcher = EventWatcher(
+            nats_url=cfg.nats_url, opencode=client,
+            provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
+        )
         watcher.set_routing(data.get("subagents", {}))
         await watcher.start()
 
@@ -329,6 +341,7 @@ def add(description: str = typer.Argument(help="Natural language behavior descri
             await client.send_message(
                 session_id,
                 f"Create and spawn a new subagent for this behavior: {description}",
+                provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
             )
         asyncio.run(_add())
         typer.echo(f"Added and spawned: {description}")
@@ -385,5 +398,6 @@ def rm(description: str = typer.Argument(help="Behavior text to remove (partial 
                 await client.send_message(
                     session_id,
                     f"Kill the subagent that handles this behavior: {m}",
+                    provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
                 )
         asyncio.run(_rm())

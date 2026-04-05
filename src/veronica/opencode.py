@@ -36,25 +36,16 @@ class OpenCodeClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def send_message(self, session_id: str, text: str, agent: str = "build") -> dict:
+    async def send_message(
+        self, session_id: str, text: str, agent: str = "build",
+        provider_id: str | None = None, model_id: str | None = None,
+    ) -> None:
         body = {
             "parts": [{"type": "text", "text": text}],
             "agent": agent,
         }
-        async with httpx.AsyncClient(timeout=120) as c:
-            resp = await c.post(
-                self._url(f"/session/{session_id}/message"),
-                json=body,
-                headers=self._headers,
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def send_message_async(self, session_id: str, text: str, agent: str = "build") -> None:
-        body = {
-            "parts": [{"type": "text", "text": text}],
-            "agent": agent,
-        }
+        if provider_id and model_id:
+            body["model"] = {"providerID": provider_id, "modelID": model_id}
         async with httpx.AsyncClient() as c:
             resp = await c.post(
                 self._url(f"/session/{session_id}/prompt_async"),

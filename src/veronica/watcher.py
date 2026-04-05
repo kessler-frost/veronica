@@ -18,9 +18,11 @@ DEBOUNCE_WINDOW = 2.0
 class EventWatcher:
     """Watches NATS events and routes them to appropriate OpenCode subagent sessions."""
 
-    def __init__(self, nats_url: str, opencode: OpenCodeClient):
+    def __init__(self, nats_url: str, opencode: OpenCodeClient, provider_id: str = "", model_id: str = ""):
         self.nats_url = nats_url
         self._opencode = opencode
+        self._provider_id = provider_id
+        self._model_id = model_id
         self._nc = None
         self._subs: list = []
         self._routing: dict[str, dict] = {}
@@ -96,7 +98,10 @@ class EventWatcher:
         batch_text = "\n".join(lines)
 
         logger.info("sending %d events to subagent %s", len(events), name)
-        await self._opencode.send_message_async(session_id, batch_text)
+        await self._opencode.send_message(
+            session_id, batch_text,
+            provider_id=self._provider_id, model_id=self._model_id,
+        )
 
         self._processing.discard(name)
 
