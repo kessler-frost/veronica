@@ -53,6 +53,8 @@ func main() {
 		log.Fatalf("register tools: %v", err)
 	}
 
+	go pub.Run(ctx, events)
+
 	go func() {
 		if err := ebpfMgr.ReadEvents(ctx); err != nil {
 			log.Printf("ebpf reader stopped: %v", err)
