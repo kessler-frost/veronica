@@ -224,7 +224,13 @@ def agent_add(description: str = typer.Argument(help="Natural language descripti
     """Create an agent from natural language."""
 
     async def _add():
-        config = await create_agent_config(description, cfg.llm_base_url, cfg.llm_model)
+        config = await create_agent_config(
+            description,
+            llm_provider=cfg.llm_provider,
+            llm_base_url=cfg.llm_base_url,
+            llm_model=cfg.llm_model,
+            openrouter_model=cfg.openrouter_model,
+        )
 
         nc = await nats_client.connect(cfg.nats_url)
         js = nc.jetstream()
