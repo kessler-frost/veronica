@@ -1,7 +1,9 @@
+# SUPERSEDED — See `2026-04-04-nats-agent-architecture-design.md`
+
 # Veronica Two-Step Model: Daemon + Host Agents
 
 **Date:** 2026-04-04
-**Status:** Approved
+**Status:** Superseded by NATS architecture
 **Supersedes:** Monolithic daemon architecture from `2026-04-03-veronica-design.md` (agent loop + LLM sections only)
 
 ## Overview

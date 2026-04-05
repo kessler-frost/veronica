@@ -1,6 +1,6 @@
 # eBPF: Full Capabilities Reference
 
-eBPF gives you four powers over the Linux kernel.
+eBPF gives you six powers over the Linux kernel: observe, enforce, transform, schedule, measure, and iterate.
 
 ## Power 1: See Everything (Observation)
 
@@ -66,7 +66,7 @@ eBPF programs are small C functions loaded into the kernel. They have strict lim
 - **Cannot call userspace** — communicate via ring buffers and maps only
 - **Verified before loading** — the kernel's BPF verifier proves safety before running
 
-This is why intelligence lives in userspace. eBPF is the sensor and actuator; the Go daemon is the brain.
+This is why intelligence lives in userspace. eBPF is the sensor and actuator; the Python host agents are the brain.
 
 ## Communication: Kernel ↔ Userspace
 

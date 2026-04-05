@@ -16,7 +16,7 @@ type Server struct {
 	ns   *natsserver.Server
 	nc   *nats.Conn
 	js   jetstream.JetStream
-	Port int
+	port int
 }
 
 type Config struct {
@@ -59,14 +59,14 @@ func Start(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("create jetstream: %w", err)
 	}
 
-	s := &Server{ns: ns, nc: nc, js: js, Port: ns.Addr().(*net.TCPAddr).Port}
+	s := &Server{ns: ns, nc: nc, js: js, port: ns.Addr().(*net.TCPAddr).Port}
 
 	if err := s.setupStreamsAndBuckets(context.Background()); err != nil {
 		s.Close()
 		return nil, err
 	}
 
-	log.Printf("nats server running on port %d with JetStream", s.Port)
+	log.Printf("nats server running on port %d with JetStream", s.port)
 	return s, nil
 }
 

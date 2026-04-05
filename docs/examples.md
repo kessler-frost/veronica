@@ -107,22 +107,17 @@ Real-world examples of how Veronica adds value to daily workflows. Each scenario
 
 ## Implementation Status
 
-| # | Scenario | Classifier | Action Executor | Prompt | Status |
-|---|---|---|---|---|---|
-| 1 | Project scaffolding | Proactive (mkdir) | Needs real executor | Needs tuning | Not tested |
-| 2 | Git clone auto-setup | Proactive (git) | Needs real executor | Needs tuning | Not tested |
-| 3 | Crash recovery | Needs: process_exit + non-zero → Immediate | Needs real executor | Needs tuning | Not tested |
-| 4 | Dangerous chmod | Immediate (sensitive file) | Needs real executor | Needs tuning | Not tested |
-| 5 | curl auto-extract | Proactive (curl) | Needs real executor | Needs tuning | Not tested |
-| 6 | Docker guardrails | Proactive (docker) | Needs real executor | Needs tuning | Not tested |
-| 7 | SSH key hardening | Needs: ssh-keygen → Proactive | Needs real executor | Needs tuning | Not tested |
-| 8 | Repeated command alias | Digest (pattern detection) | Needs real executor | Needs tuning | Not tested |
-| 9 | Config auto-validate | Needs: file_write on configs → Immediate | Needs real executor | Needs tuning | Not tested |
-| 10 | Package security scan | Proactive (uv) | Needs real executor | Needs tuning | Not tested |
+| # | Scenario | Status |
+|---|---|---|
+| 1 | Project scaffolding | Not tested |
+| 2 | Git clone auto-setup | Not tested |
+| 3 | Crash recovery | Not tested |
+| 4 | Dangerous chmod | Not tested |
+| 5 | curl auto-extract | Not tested |
+| 6 | Docker guardrails | Not tested |
+| 7 | SSH key hardening | Not tested |
+| 8 | Repeated command alias | Not tested |
+| 9 | Config auto-validate | Not tested |
+| 10 | Package security scan | Not tested |
 
-## Common requirements across all scenarios
-
-1. **Real action executor** — currently stubbed, needs to actually run shell commands
-2. **Classifier updates** — some commands need to move between categories
-3. **Prompt tuning** — each scenario needs specific instructions in the system prompt
-4. **Notification** — actions are silent (just do it), observable via `veronica logs` or future TUI
+All scenarios use NATS tool responders (`tools.exec`) for actions and per-agent context prompts for behavior.

@@ -1,3 +1,5 @@
+# SUPERSEDED — See `2026-04-04-nats-agent-architecture-design.md`
+
 # Veronica: eBPF-Powered Embedded Intelligence Layer
 
 ## What It Is

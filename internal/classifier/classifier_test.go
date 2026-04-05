@@ -2,7 +2,6 @@ package classifier
 
 import (
 	"testing"
-	"time"
 
 	"github.com/fimbulwinter/veronica/internal/event"
 )
@@ -67,23 +66,5 @@ func TestClassifier_NetConnectPasses(t *testing.T) {
 	e := event.Event{Type: "net_connect", Resource: "ip:1.2.3.4:80", Data: `{"comm":"curl","daddr":"1.2.3.4","dport":80}`}
 	if got := c.Classify(e); got != CategoryPass {
 		t.Fatalf("expected pass for net_connect, got %s", got)
-	}
-}
-
-func TestBatch_AddAndFlush(t *testing.T) {
-	b := NewBatch(5 * time.Second)
-
-	b.Add(event.Event{Type: "process_exec", Resource: "pid:1"})
-	b.Add(event.Event{Type: "process_exec", Resource: "pid:2"})
-	b.Add(event.Event{Type: "net_connect", Resource: "ip:1.2.3.4:80"})
-
-	events := b.Flush()
-	if len(events) != 3 {
-		t.Fatalf("expected 3 events, got %d", len(events))
-	}
-
-	events = b.Flush()
-	if len(events) != 0 {
-		t.Fatalf("expected 0 events after second flush, got %d", len(events))
 	}
 }

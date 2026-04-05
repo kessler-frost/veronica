@@ -14,6 +14,7 @@ import nats as nats_client
 import typer
 
 from veronica.agents.creator import create_agent_config
+from veronica.agents.runner import AgentRunner
 from veronica.config import VeronicaConfig
 
 app = typer.Typer(help="Control the Veronica eBPF intelligence layer.")
@@ -102,7 +103,6 @@ def start():
     _vm_shell("sudo", "systemctl", "start", "veronica")
 
     typer.echo("Starting agent runner (Ctrl+C to stop)...")
-    from veronica.agents.runner import AgentRunner
     runner = AgentRunner(cfg)
     try:
         asyncio.run(runner.run())

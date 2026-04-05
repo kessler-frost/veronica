@@ -3,7 +3,6 @@ package classifier
 import (
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/fimbulwinter/veronica/internal/event"
 )
@@ -93,34 +92,4 @@ func (c *Classifier) Classify(e event.Event) EventCategory {
 	}
 
 	return CategoryPass
-}
-
-// Batch collects events for periodic batch processing.
-type Batch struct {
-	mu       sync.Mutex
-	events   []event.Event
-	interval time.Duration
-}
-
-// NewBatch creates a batch with the given flush interval.
-func NewBatch(interval time.Duration) *Batch {
-	return &Batch{
-		interval: interval,
-	}
-}
-
-// Add appends an event to the current batch window.
-func (b *Batch) Add(e event.Event) {
-	b.mu.Lock()
-	b.events = append(b.events, e)
-	b.mu.Unlock()
-}
-
-// Flush returns all accumulated events and resets the buffer.
-func (b *Batch) Flush() []event.Event {
-	b.mu.Lock()
-	events := b.events
-	b.events = nil
-	b.mu.Unlock()
-	return events
 }

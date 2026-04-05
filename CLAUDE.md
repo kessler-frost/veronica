@@ -11,7 +11,7 @@
 - **Daemon** (`cmd/veronicad/`): Go binary, runs as root in Lima VM. Embedded NATS server + JetStream, eBPF manager, classifier, event publisher. Tool responders on NATS request/reply. All state in NATS KV.
 - **Host Agents** (`src/veronica/agents/`): Python, run on macOS host. Connect to daemon via NATS, subscribe to event types, run LLM loops via Agno framework + LM Studio.
 - **CLI** (`src/veronica/cli/`): Python (Typer), manages VM lifecycle, daemon, and agents.
-- **NATS** replaces the old WebSocket + buntdb. Events stream (5min TTL), KV buckets for agents/tasks/policies/logs.
+- **NATS**: embedded server + JetStream. Events stream (5min TTL), KV buckets for agents/tasks/policies/logs.
 - **Why not SSH**: daemon holds live eBPF map/program file descriptors. The daemon IS the eBPF runtime.
 - **Noise filtering**: TEMPORARY — hardcoded silent command lists in Go classifier + Python agent. Will be replaced with smarter approach.
 - **Design specs**: `docs/superpowers/specs/2026-04-03-veronica-design.md`, `docs/superpowers/specs/2026-04-04-two-step-model-design.md`
@@ -58,7 +58,7 @@
 - Daemon binary: `veronicad`, package `./cmd/veronicad/`, installs to `/usr/local/bin/veronicad`
 - Build via CLI: `uv run veronica build` (syncs source + builds in VM)
 - Full setup: `uv run veronica setup` (first time — includes eBPF compile + Go generate)
-- Go tests (macOS): `go test ./internal/classifier/ ./internal/nats/ ./internal/tool/ -v`
+- Go tests (macOS): `go test ./internal/classifier/ ./internal/nats/ -v`
 - Python tests: `uv run pytest`
 - eBPF tests: must run in VM
 
