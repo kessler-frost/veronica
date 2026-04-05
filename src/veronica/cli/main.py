@@ -1,4 +1,4 @@
-"""Veronica CLI — manage daemon, VM, and agents."""
+"""Veronica CLI — manage daemon, VM, and behaviors."""
 
 from __future__ import annotations
 
@@ -12,16 +12,14 @@ from pathlib import Path
 import msgspec
 import nats as nats_client
 import typer
+from agno.agent import Agent
 
-from veronica.agents.creator import create_agent_config
-from veronica.agents.runner import AgentRunner
+from veronica.agents.agent import VeronicaAgent
 from veronica.config import VeronicaConfig
 
 app = typer.Typer(help="Control the Veronica eBPF intelligence layer.")
 vm_app = typer.Typer(help="Manage the Lima VM lifecycle.")
-agent_app = typer.Typer(help="Manage agents.")
 app.add_typer(vm_app, name="vm")
-app.add_typer(agent_app, name="agent")
 
 cfg = VeronicaConfig()
 
@@ -86,7 +84,7 @@ def _veronica_already_running() -> bool:
 
 @app.command()
 def start():
-    """Start VM, daemon, and agent runner. Idempotent."""
+    """Start VM, daemon, and agent. Idempotent."""
     if _veronica_already_running():
         typer.echo("Another veronica process is already running. Run `veronica stop` first.", err=True)
         raise typer.Exit(1)
@@ -102,10 +100,10 @@ def start():
     typer.echo("Starting daemon...")
     _vm_shell("sudo", "systemctl", "start", "veronica")
 
-    typer.echo("Starting agent runner (Ctrl+C to stop)...")
-    runner = AgentRunner(cfg)
+    typer.echo("Starting agent (Ctrl+C to stop)...")
+    agent = VeronicaAgent(cfg=cfg, nats_url=cfg.nats_url)
     try:
-        asyncio.run(runner.run())
+        asyncio.run(agent.run())
     except KeyboardInterrupt:
         typer.echo("Shutting down...")
 
@@ -217,40 +215,60 @@ def vm_ssh():
     os.execv(limactl, ["limactl", "shell", cfg.vm_name])
 
 
-# --- Agent subcommands ---
+# --- Behavior commands ---
 
-@agent_app.command("add")
-def agent_add(description: str = typer.Argument(help="Natural language description")):
-    """Create an agent from natural language."""
+VALID_EVENTS = frozenset({"process_exec", "process_exit", "net_connect", "file_open"})
+
+
+@app.command()
+def add(description: str = typer.Argument(help="Natural language behavior description")):
+    """Add a behavior to Veronica."""
 
     async def _add():
-        config = await create_agent_config(description, cfg.build_model())
-
         nc = await nats_client.connect(cfg.nats_url)
         js = nc.jetstream()
         kv = await js.key_value("agents")
 
-        agent_data = {
-            "events": config["events"],
-            "filter": config.get("filter", {}),
-            "context": config["context"],
-            "status": "active",
-            "description": description,
-        }
-        await kv.put(config["name"], msgspec.json.encode(agent_data))
+        # Load or create config
+        try:
+            entry = await kv.get("veronica")
+            config = msgspec.json.decode(entry.value, type=dict)
+        except Exception:
+            config = {"behaviors": [], "subscriptions": []}
+
+        config["behaviors"].append(description)
+
+        # Ask LLM which events the combined behaviors need
+        model = cfg.build_model()
+        sub_agent = Agent(
+            model=model,
+            instructions="Given a list of behaviors for an eBPF agent, return ONLY a JSON array of event types needed. Valid types: process_exec, process_exit, file_open, net_connect. Example: [\"process_exec\", \"file_open\"]. No other text.",
+            markdown=False,
+        )
+        behaviors_text = "\n".join(f"- {b}" for b in config["behaviors"])
+        response = await sub_agent.arun(f"Behaviors:\n{behaviors_text}")
+        content = response.content.strip() if response else "[]"
+
+        # Parse event types from response
+        json_start = content.find("[")
+        json_end = content.rfind("]") + 1
+        if json_start >= 0 and json_end > 0:
+            event_types = msgspec.json.decode(content[json_start:json_end].encode(), type=list)
+            config["subscriptions"] = [e for e in event_types if e in VALID_EVENTS]
+
+        await kv.put("veronica", msgspec.json.encode(config))
         await nc.close()
 
-        typer.echo(f"Created agent '{config['name']}'")
-        typer.echo(f"  Subscribed to: {', '.join(config['events'])}")
-        typer.echo(f"  Filter: {config.get('filter', {})}")
-        typer.echo(f"  Context: {config['context']}")
+        typer.echo(f"Added: {description}")
+        typer.echo(f"  Subscriptions: {config['subscriptions']}")
+        typer.echo(f"  Total behaviors: {len(config['behaviors'])}")
 
     asyncio.run(_add())
 
 
-@agent_app.command("list")
-def agent_list():
-    """List all registered agents."""
+@app.command("list")
+def list_behaviors():
+    """List all behaviors."""
 
     async def _list():
         nc = await nats_client.connect(cfg.nats_url)
@@ -258,54 +276,77 @@ def agent_list():
         kv = await js.key_value("agents")
 
         try:
-            keys = await kv.keys()
+            entry = await kv.get("veronica")
+            config = msgspec.json.decode(entry.value, type=dict)
         except Exception:
-            typer.echo("No agents registered.")
+            typer.echo("No behaviors configured. Run `veronica add \"...\"` to add one.")
             await nc.close()
             return
 
-        for key in keys:
-            entry = await kv.get(key)
-            config = msgspec.json.decode(entry.value, type=dict)
-            status = config.get("status", "unknown")
-            desc = config.get("description", config.get("context", ""))
-            events = ", ".join(config.get("events", []))
-            typer.echo(f"  {key:20s} {status:10s} events=[{events}]  {desc[:60]}")
+        typer.echo(f"Subscriptions: {config.get('subscriptions', [])}")
+        typer.echo(f"Behaviors ({len(config.get('behaviors', []))}):")
+        for i, b in enumerate(config.get("behaviors", []), 1):
+            typer.echo(f"  {i}. {b}")
 
         await nc.close()
 
     asyncio.run(_list())
 
 
-@agent_app.command("stop")
-def agent_stop(name: str = typer.Argument(help="Agent name")):
-    """Stop a specific agent."""
-
-    async def _stop():
-        nc = await nats_client.connect(cfg.nats_url)
-        js = nc.jetstream()
-        kv = await js.key_value("agents")
-
-        entry = await kv.get(name)
-        config = msgspec.json.decode(entry.value, type=dict)
-        config["status"] = "stopped"
-        await kv.put(name, msgspec.json.encode(config))
-        await nc.close()
-        typer.echo(f"Stopped agent '{name}'")
-
-    asyncio.run(_stop())
-
-
-@agent_app.command("rm")
-def agent_rm(name: str = typer.Argument(help="Agent name")):
-    """Remove an agent."""
+@app.command()
+def rm(description: str = typer.Argument(help="Behavior text to remove (partial match)")):
+    """Remove a behavior."""
 
     async def _rm():
         nc = await nats_client.connect(cfg.nats_url)
         js = nc.jetstream()
         kv = await js.key_value("agents")
-        await kv.delete(name)
+
+        try:
+            entry = await kv.get("veronica")
+            config = msgspec.json.decode(entry.value, type=dict)
+        except Exception:
+            typer.echo("No behaviors configured.")
+            await nc.close()
+            return
+
+        behaviors = config.get("behaviors", [])
+        matches = [b for b in behaviors if description.lower() in b.lower()]
+
+        if not matches:
+            typer.echo(f"No behavior matching '{description}'")
+            await nc.close()
+            return
+
+        for m in matches:
+            behaviors.remove(m)
+            typer.echo(f"Removed: {m}")
+
+        config["behaviors"] = behaviors
+
+        # Re-evaluate subscriptions
+        if behaviors:
+            model = cfg.build_model()
+            sub_agent = Agent(
+                model=model,
+                instructions="Given a list of behaviors for an eBPF agent, return ONLY a JSON array of event types needed. Valid types: process_exec, process_exit, file_open, net_connect. No other text.",
+                markdown=False,
+            )
+            behaviors_text = "\n".join(f"- {b}" for b in behaviors)
+            response = await sub_agent.arun(f"Behaviors:\n{behaviors_text}")
+            content = response.content.strip() if response else "[]"
+            json_start = content.find("[")
+            json_end = content.rfind("]") + 1
+            if json_start >= 0 and json_end > 0:
+                event_types = msgspec.json.decode(content[json_start:json_end].encode(), type=list)
+                config["subscriptions"] = [e for e in event_types if e in VALID_EVENTS]
+        else:
+            config["subscriptions"] = []
+
+        await kv.put("veronica", msgspec.json.encode(config))
         await nc.close()
-        typer.echo(f"Removed agent '{name}'")
+
+        typer.echo(f"  Subscriptions: {config['subscriptions']}")
+        typer.echo(f"  Remaining behaviors: {len(behaviors)}")
 
     asyncio.run(_rm())
