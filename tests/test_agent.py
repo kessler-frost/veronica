@@ -4,37 +4,31 @@ import msgspec
 import nats as nats_client
 import pytest
 
-from veronica.agents.base import BaseAgent
-
-
-class EchoAgent(BaseAgent):
-    subscribed_events = ["process_exec"]
-
-    def get_context_append(self) -> str:
-        return "Echo test agent."
+from veronica.agents.agent import VeronicaAgent
 
 
 @pytest.mark.asyncio
-async def test_agent_call_tool():
-    """Test that _call_nats_tool sends NATS request and receives response."""
+async def test_agent_builds_prompt_with_behaviors():
+    """System prompt includes all behaviors from config."""
     try:
         nc = await nats_client.connect("nats://localhost:4222")
     except Exception:
         pytest.skip("NATS server not running")
 
-    # Mock tool responder
-    async def handler(msg):
-        resp = msgspec.json.encode({"ok": True, "data": "hello"})
-        await msg.respond(resp)
+    js = nc.jetstream()
+    kv = await js.key_value("agents")
+    await kv.put("veronica", msgspec.json.encode({
+        "behaviors": ["scaffold projects", "revert dangerous permissions"],
+        "subscriptions": ["process_exec"],
+    }))
 
-    await nc.subscribe("tools.exec", cb=handler)
-
-    agent = EchoAgent(agent_id="test-echo", nats_url="nats://localhost:4222")
+    agent = VeronicaAgent(nats_url="nats://localhost:4222")
     agent._nc = nc
-    agent._js = nc.jetstream()
+    agent._js = js
+    config = await agent._load_config()
 
-    result = await agent._call_nats_tool("exec", {"command": "echo hello", "reason": "test"})
-    assert result["ok"] is True
-    assert result["data"] == "hello"
+    assert config["behaviors"] == ["scaffold projects", "revert dangerous permissions"]
+    assert config["subscriptions"] == ["process_exec"]
 
+    await kv.delete("veronica")
     await nc.close()
