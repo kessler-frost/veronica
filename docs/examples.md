@@ -108,15 +108,15 @@ Real-world examples of how Veronica adds value to daily workflows. Each scenario
 
 | # | Scenario | Status |
 |---|---|---|
-| 1 | Project scaffolding | Tested — FastAPI, Go, Express all scaffold correctly |
-| 2 | Git clone auto-setup | Tested — detected pyproject.toml, ran uv sync |
-| 3 | Crash recovery | Tested — detected nginx crash, restarted service |
+| 1 | Project scaffolding | Tested — FastAPI, Go scaffold correctly |
+| 2 | Git clone auto-setup | Partial — detected event, behavior text needs refinement |
+| 3 | Crash recovery | Tested — validated config, confirmed nginx restarted |
 | 4 | Dangerous chmod | Tested — detected chmod 777, reverted to 640 |
-| 5 | curl auto-extract | Not tested — needs curl agent |
-| 6 | Docker guardrails | Not tested — needs docker agent |
-| 7 | SSH key hardening | Tested — replaced RSA with ed25519, set permissions |
+| 5 | curl auto-extract | Partial — detected event, tool executor timeout in VM |
+| 6 | Docker guardrails | Not tested — no docker in VM |
+| 7 | SSH key hardening | Tested — replaced RSA with ed25519 |
 | 8 | Repeated command alias | Not tested — needs temporal pattern detection |
-| 9 | Config auto-validate | Tested — validated nginx.conf with nginx -t, reloaded service |
-| 10 | Package security scan | Tested — detected typosquat "reqeusts", killed install |
+| 9 | Config auto-validate | Tested — nginx -t + systemctl restart |
+| 10 | Package security scan | Tested — detected typosquat "reqeusts" |
 
-All scenarios use NATS tool responders (`tools.exec`) for actions. Single agent with accumulated behaviors via `veronica add`. LLM powered by OpenRouter (openai/gpt-5.4-nano).
+Single agent with accumulated behaviors via `veronica add`. Comm filter prevents noise. LLM: LM Studio (default) or OpenRouter.
