@@ -24,30 +24,6 @@ app.add_typer(vm_app, name="vm")
 
 cfg = VeronicaConfig()
 
-MAIN_AGENT_PROMPT = """You are the Veronica orchestrator. You spawn and manage OpenCode subagents that handle eBPF kernel events.
-
-IMPORTANT: Do NOT run veronica CLI commands. You manage subagents by writing markdown files and using @mentions.
-
-When asked to add a behavior, do exactly this:
-1. Pick a short kebab-case name (e.g. "scaffolder", "perm-guard")
-2. Decide which eBPF events it needs: process_exec, process_exit, file_open, net_connect
-3. Decide which command names (comms) trigger it — be strict, only exact process names
-4. Write a file at .opencode/agents/<name>.md with this format:
-
----
-description: <one line description>
-mode: subagent
----
-
-<system prompt for the subagent explaining what it should do when it receives events>
-
-5. After writing the file, invoke the subagent with: @<name> "You are now active. Wait for events."
-
-When asked to remove a behavior, delete the .opencode/agents/<name>.md file.
-
-"""
-
-
 def _vm_running() -> bool:
     result = subprocess.run(["limactl", "list", "--json"], capture_output=True, text=True)
     for line in result.stdout.strip().splitlines():
@@ -117,12 +93,10 @@ def _veronica_already_running() -> bool:
 
 
 def _setup_opencode_config():
-    """Create ~/.veronica/.opencode/ with MCP config and agents dir."""
+    """Create ~/.veronica/.opencode/opencode.json with MCP config."""
     oc_dir = cfg.opencode_config_dir
-    agents_dir = oc_dir / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
+    oc_dir.mkdir(parents=True, exist_ok=True)
 
-    # opencode.json — MCP config only (auth handled by OpenCode's auth system)
     oc_config = {
         "mcp": {
             "veronica": {
@@ -132,16 +106,6 @@ def _setup_opencode_config():
         },
     }
     (oc_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2))
-
-    # Main agent
-    main_agent = f"""---
-description: Veronica orchestrator — spawns and manages subagents for eBPF behaviors
-mode: primary
----
-
-{MAIN_AGENT_PROMPT}
-"""
-    (agents_dir / "main.md").write_text(main_agent)
 
 
 # --- Top-level commands ---
@@ -195,59 +159,42 @@ def start():
         watcher.set_routing(data.get("subagents", {}))
         set_watcher(watcher, cfg.behaviors_file)
 
-        # For each behavior that doesn't have a subagent session yet, create one
+        # For each behavior, create a session and ask it to subscribe
         for behavior in data.get("behaviors", []):
-            # Check if we already have a subagent for this behavior
+            # Check if session already exists
             matching = [
                 name for name, sa in data.get("subagents", {}).items()
                 if sa.get("behavior") == behavior
             ]
             if matching:
-                typer.echo(f"Subagent already exists: {matching[0]}")
+                typer.echo(f"Already active: {matching[0]}")
                 continue
 
-            # Snapshot existing agent files
-            agents_dir = cfg.opencode_config_dir / "agents"
-            agents_dir.mkdir(parents=True, exist_ok=True)
-            existing_agents = {f.stem for f in agents_dir.glob("*.md")}
+            # Create a session for this behavior
+            name = behavior.lower().replace(" ", "-")[:30]
+            session = await client.create_session()
+            config = {
+                "name": name,
+                "session_id": session["id"],
+                "behavior": behavior,
+                "subscriptions": [],
+                "comm_filter": [],
+            }
+            data.setdefault("subagents", {})[name] = config
+            _save_behaviors(data)
 
-            # Use creator session to write the .md file
-            typer.echo(f"Creating agent for: {behavior}")
-            creator_session = await client.create_session()
-            await client.send_message_and_wait(
-                creator_session["id"],
-                f"{MAIN_AGENT_PROMPT}\n\nCreate a subagent for this behavior: {behavior}",
+            typer.echo(f"  {name} → session {session['id']}")
+
+            # Tell it to subscribe to events
+            await client.send_message(
+                session["id"],
+                f"You are a Veronica eBPF agent. Your behavior: {behavior}\n\n"
+                "First, call list_subscriptions to see available eBPF event types. "
+                "Then call subscribe with your agent name and the event types + comm filters relevant to your behavior. "
+                f"Your agent name is: {name}\n\n"
+                "After subscribing, wait for events. When you receive events, act on them using the tools available to you.",
                 provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
             )
-
-            # Find the new .md file the creator wrote
-            new_agents = {f.stem for f in agents_dir.glob("*.md")} - existing_agents
-            if new_agents:
-                name = new_agents.pop()
-                subagent_session = await client.create_session()
-                config = {
-                    "name": name,
-                    "session_id": subagent_session["id"],
-                    "behavior": behavior,
-                    "subscriptions": [],
-                    "comm_filter": [],
-                }
-                data.setdefault("subagents", {})[name] = config
-                _save_behaviors(data)
-                typer.echo(f"  Agent: {name} → session {subagent_session['id']}")
-
-                # Tell the subagent to discover and subscribe to events
-                typer.echo(f"  Asking {name} to subscribe...")
-                await client.send_message(
-                    subagent_session["id"],
-                    "You are now active. First, call list_subscriptions to see all available eBPF event types and filtering options. "
-                    "Then call subscribe with your agent name and the event types + comm filters relevant to your behavior. "
-                    f"Your agent name is: {name}",
-                    agent=name,
-                    provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
-                )
-            else:
-                typer.echo(f"  WARNING: No agent file created for: {behavior}")
 
         # Start event watcher (already created above, routing may have been updated by subscribe_events)
         await watcher.start()
