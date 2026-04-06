@@ -134,10 +134,16 @@ def start():
         n = len(agents)
         typer.echo(f"\nVeronica running with {n} behavior agent{'s' if n != 1 else ''} (Ctrl+C to stop)")
 
-        # Run all agents concurrently
-        tasks = [asyncio.create_task(a.serve()) for a in agents]
+        # Start serving all agents, then boot (self-configure + subscribe)
+        serve_tasks = [asyncio.create_task(a.serve()) for a in agents]
+        # Give agents a moment to register with control plane before booting
+        await asyncio.sleep(1)
+        for a in agents:
+            if hasattr(a, "_boot"):
+                await a._boot()
+
         try:
-            await asyncio.gather(*tasks)
+            await asyncio.gather(*serve_tasks)
         except asyncio.CancelledError:
             pass
 

@@ -39,6 +39,7 @@ EVENT_SCHEMA = {
 }
 
 DAEMON_SKILLS = [
+    "subscribe", "unsubscribe",
     "exec", "enforce", "transform", "schedule", "measure",
     "map_read", "map_write", "map_delete",
     "program_list", "program_load", "program_detach",
@@ -115,8 +116,7 @@ def create_behavior_agent(
         agentfield_server=agentfield_url,
     )
 
-    # Mutable state — will be populated by self_configure or from existing_config
-    agent_config: dict = existing_config or {}
+    node_id = f"veronica-{agent_id}"
 
     system_prompt = (
         f"You are a Veronica behavior agent. Your behavior: {behavior}\n\n"
@@ -129,29 +129,32 @@ def create_behavior_agent(
         'or {"action": "none"} if no action needed. Only respond with the JSON, nothing else.'
     )
 
+    async def _boot() -> None:
+        """Self-configure (if needed) and subscribe with the daemon."""
+        config = existing_config
+        if not config:
+            logger.info("agent %s: first boot, self-configuring...", agent_id)
+            config = await self_configure(app, behavior, agent_id, behaviors_file)
+
+        # Register with daemon so it starts sending us matching events
+        await app.call(
+            "veronicad.subscribe",
+            node_id=node_id,
+            events=config["subscriptions"],
+            comm_filter=config.get("comm_filter", []),
+        )
+        logger.info("agent %s: subscribed to daemon for %s", agent_id, config["subscriptions"])
+
+    # Store boot task so the CLI can await it after serve()
+    app._boot = _boot
+
     @app.reasoner(tags=["behavior"])
     async def receive_event(event: str) -> dict[str, Any]:
         """Receive an eBPF event from the daemon and reason about how to react."""
-        # Self-configure on first event if not already configured
-        nonlocal agent_config
-        if not agent_config:
-            logger.info("agent %s: first boot, self-configuring...", agent_id)
-            agent_config = await self_configure(app, behavior, agent_id, behaviors_file)
-
         ev = msgspec.json.decode(event.encode(), type=dict)
         event_type = ev.get("type", "unknown")
         data = ev.get("data", {})
         comm = data.get("comm", "")
-
-        # Filter based on self-configured subscriptions and comm_filter
-        subs = agent_config.get("subscriptions", VALID_EVENTS)
-        comm_filter = set(agent_config.get("comm_filter", []))
-
-        if event_type not in subs:
-            return {"acted": False, "reason": "not subscribed to this event type"}
-
-        if comm_filter and comm not in comm_filter:
-            return {"acted": False, "reason": "comm not in filter"}
 
         logger.info("behavior %s received %s event: %s", agent_id, event_type, comm)
 

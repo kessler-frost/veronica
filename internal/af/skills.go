@@ -321,7 +321,15 @@ func BuildMeasureCmd(req MeasureRequest) (string, error) {
 
 // RegisterSkills registers all daemon functions with Agentfield.
 // These are deterministic skills (no AI), but the Go SDK only has RegisterReasoner.
-func RegisterSkills(ag *agent.Agent, tracker *PIDTracker, maps EBPFMaps) {
+func RegisterSkills(ag *agent.Agent, tracker *PIDTracker, maps EBPFMaps, pub *Publisher) {
+	ag.RegisterReasoner("subscribe", handleSubscribe(pub),
+		agent.WithDescription("Subscribe a behavior agent to specific eBPF event types"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("unsubscribe", handleUnsubscribe(pub),
+		agent.WithDescription("Unsubscribe a behavior agent from events"),
+		agent.WithReasonerTags("skill"),
+	)
 	ag.RegisterReasoner("exec", handleExec(tracker),
 		agent.WithDescription("Execute a shell command in the VM"),
 		agent.WithReasonerTags("skill"),
@@ -382,6 +390,67 @@ func errResult(msg string) (any, error)    { return result(false, "", msg), nil 
 func errResultf(f string, a ...any) (any, error) { return errResult(fmt.Sprintf(f, a...)) }
 
 func parseInput[T any](input map[string]any) (T, error) {
+	var req T
+	data, err := json.Marshal(input)
+	if err != nil {
+		return req, err
+	}
+	err = json.Unmarshal(data, &req)
+	return req, err
+}
+
+// --- Subscribe/Unsubscribe handlers ---
+
+type SubscribeRequest struct {
+	NodeID     string   `json:"node_id"`
+	Events     []string `json:"events"`
+	CommFilter []string `json:"comm_filter"`
+}
+
+type UnsubscribeRequest struct {
+	NodeID string `json:"node_id"`
+}
+
+func handleSubscribe(pub *Publisher) func(ctx context.Context, input map[string]any) (any, error) {
+	return func(ctx context.Context, input map[string]any) (any, error) {
+		req, err := parseInput[SubscribeRequest](input)
+		if err != nil {
+			return errResultf("bad request: %v", err)
+		}
+		if req.NodeID == "" {
+			return errResult("node_id is required")
+		}
+		if len(req.Events) == 0 {
+			return errResult("events list is required")
+		}
+		log.Printf("SKILL subscribe: node=%s events=%v comm_filter=%v", req.NodeID, req.Events, req.CommFilter)
+
+		pub.Subscribe(Subscriber{
+			NodeID:     req.NodeID,
+			Events:     req.Events,
+			CommFilter: req.CommFilter,
+		})
+		return okResult(fmt.Sprintf("subscribed %s to %v", req.NodeID, req.Events))
+	}
+}
+
+func handleUnsubscribe(pub *Publisher) func(ctx context.Context, input map[string]any) (any, error) {
+	return func(ctx context.Context, input map[string]any) (any, error) {
+		req, err := parseInput[UnsubscribeRequest](input)
+		if err != nil {
+			return errResultf("bad request: %v", err)
+		}
+		if req.NodeID == "" {
+			return errResult("node_id is required")
+		}
+		log.Printf("SKILL unsubscribe: node=%s", req.NodeID)
+
+		pub.Unsubscribe(req.NodeID)
+		return okResult(fmt.Sprintf("unsubscribed %s", req.NodeID))
+	}
+}
+
+// --- Other handlers ---
 	var req T
 	data, err := json.Marshal(input)
 	if err != nil {

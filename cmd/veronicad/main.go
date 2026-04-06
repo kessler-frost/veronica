@@ -46,13 +46,14 @@ func main() {
 	defer ebpfMgr.Close()
 	log.Printf("ebpf probes attached")
 
-	// Register all skills (functions) with Agentfield
+	// Publisher: eBPF events → classify → push to subscribed behavior agents
 	tracker := vaf.NewPIDTracker()
-	vaf.RegisterSkills(ag, tracker, ebpfMgr.Maps())
-
-	// Publisher: eBPF events → classify → push to behavior agents
 	cls := classifier.New()
 	pub := vaf.NewPublisher(ag, cls, tracker)
+
+	// Register all skills (functions) with Agentfield
+	// Includes subscribe/unsubscribe so behavior agents can register for events
+	vaf.RegisterSkills(ag, tracker, ebpfMgr.Maps(), pub)
 
 	go pub.Run(ctx, events)
 
