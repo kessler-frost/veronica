@@ -319,40 +319,51 @@ func BuildMeasureCmd(req MeasureRequest) (string, error) {
 
 // --- Agentfield skill registration ---
 
-// RegisterSkills registers all daemon functions as Agentfield reasoners.
+// RegisterSkills registers all daemon functions with Agentfield.
+// These are deterministic skills (no AI), but the Go SDK only has RegisterReasoner.
 func RegisterSkills(ag *agent.Agent, tracker *PIDTracker, maps EBPFMaps) {
 	ag.RegisterReasoner("exec", handleExec(tracker),
 		agent.WithDescription("Execute a shell command in the VM"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("enforce", handleEnforce(tracker),
 		agent.WithDescription("Enforce file/network access policies"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("transform", handleTransform(tracker),
 		agent.WithDescription("Apply packet transformation rules via iptables NAT"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("schedule", handleSchedule(tracker),
 		agent.WithDescription("Set CPU scheduling priority for a process"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("measure", handleMeasure(tracker),
 		agent.WithDescription("Measure performance counters for a process"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("map_read", handleMapRead(maps),
 		agent.WithDescription("Read from an eBPF map"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("map_write", handleMapWrite(maps),
 		agent.WithDescription("Write to an eBPF map"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("map_delete", handleMapDelete(maps),
 		agent.WithDescription("Delete a key from an eBPF map"),
 	)
 	ag.RegisterReasoner("program_list", handleProgramList(maps),
 		agent.WithDescription("List loaded eBPF programs and maps"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("program_load", handleProgramLoad(tracker),
 		agent.WithDescription("Load and pin an eBPF program"),
+		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("program_detach", handleProgramDetach(tracker),
 		agent.WithDescription("Detach/unpin an eBPF program"),
+		agent.WithReasonerTags("skill"),
 	)
 }
 
