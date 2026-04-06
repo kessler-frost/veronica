@@ -122,13 +122,8 @@ def _setup_opencode_config():
     agents_dir = oc_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # opencode.json — MCP + provider config
+    # opencode.json — MCP config only (auth handled by OpenCode's auth system)
     oc_config = {
-        "provider": {
-            "openrouter": {
-                "api_key": os.environ.get("OPENROUTER_API_KEY", ""),
-            }
-        },
         "mcp": {
             "veronica": {
                 "type": "remote",
@@ -177,8 +172,12 @@ def start():
     mcp_thread = threading.Thread(target=run_mcp_server, args=(cfg.mcp_port, cfg.nats_url), daemon=True)
     mcp_thread.start()
 
-    # Start OpenCode headless with ~/.veronica as working directory
+    # Start OpenCode headless from ~/.veronica (needs to be a git repo)
     typer.echo("Starting OpenCode server...")
+    if not (cfg.veronica_dir / ".git").exists():
+        subprocess.run(["git", "init", str(cfg.veronica_dir)], capture_output=True)
+        subprocess.run(["git", "-C", str(cfg.veronica_dir), "add", "-A"], capture_output=True)
+        subprocess.run(["git", "-C", str(cfg.veronica_dir), "commit", "-m", "init"], capture_output=True)
     oc_proc = subprocess.Popen(
         ["opencode", "serve", "--port", str(cfg.opencode_port)],
         cwd=str(cfg.veronica_dir),
