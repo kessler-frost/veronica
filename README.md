@@ -1,6 +1,16 @@
 # Veronica
 
-> Proactive agents at the kernel level, powered by eBPF
+> Proactive agents at the kernel level, powered by eBPF + [Agentfield](https://github.com/Agent-Field/agentfield)
+
+## Why Agentfield
+
+We switched to Agentfield because:
+
+1. **Native Python AND Go SDK support.** We couldn't find another framework with first-class SDKs for both languages. Our Go daemon and Python behavior agents were previously stitched together with NATS, FastMCP, and OpenCode — three protocols to connect two languages. Agentfield replaces all of that with one control plane.
+
+2. **Bidirectional communication, no MCP.** MCP is unidirectional — models call tools, but tools can't push events back. We need the Go daemon to push eBPF events TO agents AND agents to call functions BACK on the daemon. Agentfield does this natively. No MCP, no NATS, no OpenCode. Just agents and functions talking through a control plane.
+
+---
 
 | User did | Veronica did |
 |---|---|
@@ -34,4 +44,25 @@ uv run veronica add "revert dangerous permission changes on sensitive files"
 uv run veronica start
 ```
 
-Requires: macOS (Apple Silicon) or Linux, [uv](https://docs.astral.sh/uv/), [Lima](https://lima-vm.io/), and [OpenCode](https://opencode.ai/) with an LLM provider configured.
+Requires: macOS (Apple Silicon) or Linux, [uv](https://docs.astral.sh/uv/), [Lima](https://lima-vm.io/), [Agentfield](https://github.com/Agent-Field/agentfield), and [LM Studio](https://lmstudio.ai/) with a model loaded.
+
+## Architecture
+
+```
+                    Agentfield Control Plane
+                    (af server, macOS host)
+                           |
+              +------------+------------+
+              |                         |
+     Go Daemon                   Behavior Agents
+     (Lima VM, root)             (macOS host, Python)
+     - eBPF manager              - One per user-defined behavior
+     - Exposes functions:        - Subscribes to eBPF events
+       exec, enforce,            - Calls daemon functions
+       transform, schedule,        via control plane
+       measure, map/program ops  - LLM reasoning via
+     - Pushes eBPF events          direct LM Studio API
+              |
+         eBPF Programs
+         (kernel space)
+```

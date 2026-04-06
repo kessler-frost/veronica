@@ -2,18 +2,27 @@
 
 > Proactive agents at the kernel level, powered by eBPF
 
+## Why Agentfield
+
+We migrated from NATS + MCP + OpenCode to [Agentfield](https://github.com/Agent-Field/agentfield) for two fundamental reasons:
+
+1. **Native Python AND Go SDK support.** We couldn't find another framework that had first-class SDKs for both languages. Our Go daemon (eBPF runtime) and Python behavior agents were stitched together with NATS message passing, FastMCP bridging, and OpenCode REST calls — three separate protocols just to connect two languages. Agentfield gives us one unified control plane with native SDKs on both sides.
+
+2. **Bidirectional communication without MCP.** MCP is inherently unidirectional — the model calls tools, but tools can't push events back to the model. We need true bidirectional communication: the Go daemon pushes eBPF events TO agents, and agents call functions BACK on the daemon. MCP forced us to build a Rube Goldberg machine (NATS → EventWatcher → OpenCode → MCP → FastMCP → NATS) just to achieve what Agentfield does natively through its control plane.
+
+**Zero MCP. Zero NATS. Zero OpenCode.** Just Agentfield + eBPF + LM Studio.
+
 ## Top 3 Priorities
 1. **Lima** — Cross-platform VM runtime (macOS: Virtualization.framework, Linux: QEMU). Ubuntu guest with full eBPF support.
-2. **Hybrid Model/Harness** — Claude Opus 4.6 (via Claude Code) for development. mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled (via LM Studio, localhost:1234, parallel inference) for runtime intelligence.
+2. **Agentfield** — Control plane on macOS host. Go daemon registers functions, Python behavior agents react to events. Direct LM Studio API for LLM reasoning.
 3. **eBPF** — All six powers: observe, enforce, transform, schedule, measure, iterate.
 
 ## Architecture
-- **Daemon** (`cmd/veronicad/`): Go binary, runs as root in Lima VM. Embedded NATS server + JetStream, eBPF manager, classifier, event publisher. Tool responders on NATS request/reply.
-- **Host Service** (`src/veronica/`): Python, runs on macOS host. FastMCP server (NATS tools → MCP), OpenCode REST client, NATS event watcher with per-subagent routing. CLI manages behaviors and VM lifecycle.
-- **OpenCode** (headless server): LLM harness. Main agent spawns subagents per behavior. Each subagent has own tools, subscriptions, and comm filters. Calls tools via MCP → FastMCP → NATS → Go daemon.
-- **NATS**: embedded server + JetStream. Events stream (5min TTL), KV buckets for tasks/policies/logs.
+- **Daemon** (`cmd/veronicad/`): Go binary, runs as root in Lima VM. eBPF manager, classifier. Registers functions (exec, enforce, transform, schedule, measure, map/program ops) with Agentfield control plane. Pushes classified eBPF events to control plane.
+- **Behavior Agents** (`src/veronica/`): Python, runs on macOS host. Each user-defined behavior becomes an Agentfield agent that subscribes to relevant eBPF events and calls daemon functions through the control plane. LLM reasoning via direct LM Studio API calls.
+- **Control Plane**: Agentfield server (`af server`) runs on macOS host. Routes events from daemon to agents, routes function calls from agents to daemon. Built-in async execution, memory, observability.
 - **Why not SSH**: daemon holds live eBPF map/program file descriptors. The daemon IS the eBPF runtime.
-- **Design specs**: `docs/superpowers/specs/2026-04-05-opencode-subagent-design.md`
+- **Why not MCP**: unidirectional, requires bridging layers (FastMCP, OpenCode, EventWatcher). Agentfield is bidirectional natively.
 
 ## CLI (`uv run veronica`)
 - `uv run veronica vm start` — Create/start Lima VM
@@ -22,11 +31,11 @@
 - `uv run veronica setup` — Full setup: sync source, compile eBPF, build daemon, install systemd service
 - `uv run veronica build` — Sync source, build daemon, restart service
 - `uv run veronica add "<description>"` — Add a behavior
-- `uv run veronica list` — List all behaviors and subscriptions
+- `uv run veronica list` — List all behaviors
 - `uv run veronica rm "<description>"` — Remove a behavior (partial match)
-- `uv run veronica start` — Start VM + daemon + MCP server + OpenCode + event watcher (blocks, Ctrl+C to stop)
-- `uv run veronica stop` — Stop Veronica + OpenCode + daemon
-- `uv run veronica status` — Show VM and daemon status
+- `uv run veronica start` — Start VM + daemon + Agentfield control plane + behavior agents (blocks, Ctrl+C to stop)
+- `uv run veronica stop` — Stop everything
+- `uv run veronica status` — Show VM, daemon, and agent status
 - `uv run veronica logs` — Stream daemon logs (journalctl)
 - `uv run veronica run <cmd>` — Run arbitrary command in VM
 
@@ -35,7 +44,7 @@
 - Files copied into VM via `limactl cp` (no host mounts)
 - Project path in VM: `/home/fimbulwinter.linux/veronica`
 - LLM from VM: `http://host.lima.internal:1234`
-- Port forwarding: 4222 (NATS)
+- Port forwarding: 8090 (Agentfield control plane, daemon connects back to host)
 - Go in VM needs `GOTOOLCHAIN=auto`
 
 ## eBPF
@@ -47,16 +56,18 @@
 - cilium/ebpf API: `link.Tracepoint(group, name, prog, opts)`, `link.Kprobe(symbol, prog, opts)` — NOT `AttachTracepoint`/`AttachKprobe`
 - macOS clang diagnostics on .c files are expected and harmless
 
-## NATS
-- Embedded in daemon, port 4222
-- From host: `nats://localhost:4222` (Lima port forwarding)
-- Tool subjects: `tools.exec`, `tools.enforce`, `tools.transform`, `tools.schedule`, `tools.measure`, `tools.map.read`, `tools.map.write`, `tools.map.delete`, `tools.program.list`, `tools.program.load`, `tools.program.detach`
+## Agentfield
+- Control plane runs on macOS host: `af server` (port 8090)
+- Go daemon connects from VM: `http://host.lima.internal:8090`
+- Python behavior agents connect from host: `http://localhost:8090`
+- Functions exposed by daemon: exec, enforce, transform, schedule, measure, map.read, map.write, map.delete, program.list, program.load, program.detach
+- Events pushed by daemon: process_exec, process_exit, file_open, net_connect
 
 ## Build & Test
 - Daemon binary: `veronicad`, package `./cmd/veronicad/`, installs to `/usr/local/bin/veronicad`
 - Build via CLI: `uv run veronica build` (syncs source + builds in VM)
 - Full setup: `uv run veronica setup` (first time — includes eBPF compile + Go generate)
-- Go tests (macOS): `go test ./internal/classifier/ ./internal/nats/ -v`
+- Go tests (macOS): `go test ./internal/classifier/ ./internal/agent/ -v`
 - Python tests: `uv run pytest`
 - eBPF tests: must run in VM
 
@@ -68,7 +79,7 @@
 - Check status: `lms ps --json`
 
 ## Build Tools
-- Go modules + cilium/ebpf for daemon
+- Go modules + cilium/ebpf + Agentfield Go SDK for daemon
 - clang for eBPF C programs (CO-RE/BTF)
 - `uv` for Python (NEVER pip)
 - `bun` for JS/TS (NEVER npm/npx)
