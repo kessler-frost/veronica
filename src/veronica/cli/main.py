@@ -119,7 +119,7 @@ def start():
             desc = info["description"]
             existing_config = info.get("config")
             configured = "configured" if existing_config else "will self-configure"
-            typer.echo(f"  Starting agent {agent_id[:8]}... ({configured})")
+            typer.echo(f"  Starting agent {agent_id}... ({configured})")
             agent = create_behavior_agent(
                 agent_id=agent_id,
                 behavior=desc,
@@ -198,7 +198,7 @@ def status():
     for agent_id, info in behaviors.items():
         desc = info["description"]
         config = info.get("config")
-        typer.echo(f"  {agent_id[:8]}  {desc}")
+        typer.echo(f"  {agent_id}  {desc}")
         if config:
             subs = config.get("subscriptions", [])
             comms = config.get("comm_filter", [])
@@ -297,13 +297,13 @@ def vm_ssh():
 def add(description: str = typer.Argument(help="Natural language behavior description")):
     """Add a behavior to Veronica."""
     data = _load_behaviors()
-    agent_id = str(uuid.uuid4())
+    agent_id = uuid.uuid4().hex[:8]
     data.setdefault("behaviors", {})[agent_id] = {
         "description": description,
         "config": None,
     }
     _save_behaviors(data)
-    typer.echo(f"Added [{agent_id[:8]}]: {description}")
+    typer.echo(f"Added [{agent_id}]: {description}")
     typer.echo("Run `veronica start` to activate. Agent will self-configure on first boot.")
 
 
@@ -320,7 +320,7 @@ def list_behaviors():
     for agent_id, info in behaviors.items():
         desc = info["description"]
         config = info.get("config")
-        typer.echo(f"  {agent_id[:8]}  {desc}")
+        typer.echo(f"  {agent_id}  {desc}")
         if config:
             subs = config.get("subscriptions", [])
             comms = config.get("comm_filter", [])
@@ -347,6 +347,6 @@ def rm(description: str = typer.Argument(help="Behavior text or UUID prefix to r
 
     for agent_id in to_remove:
         desc = behaviors.pop(agent_id)["description"]
-        typer.echo(f"Removed [{agent_id[:8]}]: {desc}")
+        typer.echo(f"Removed [{agent_id}]: {desc}")
 
     _save_behaviors(data)

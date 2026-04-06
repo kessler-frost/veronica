@@ -106,7 +106,7 @@ def create_behavior_agent(
     """
 
     app = Agent(
-        node_id=f"behavior-{agent_id}",
+        node_id=f"veronica-{agent_id}",
         version="0.2.0",
         ai_config=AIConfig(
             model=f"openai/{lm_studio_model}",
