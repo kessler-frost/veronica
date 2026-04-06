@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/veronicad
-Environment=VERONICA_STORE_DIR=/var/veronica/nats
+Environment=AGENTFIELD_URL=http://host.lima.internal:8090
 Restart=on-failure
 RestartSec=3
 
