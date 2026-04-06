@@ -172,12 +172,8 @@ def start():
     mcp_thread = threading.Thread(target=run_mcp_server, args=(cfg.mcp_port, cfg.nats_url), daemon=True)
     mcp_thread.start()
 
-    # Start OpenCode headless from ~/.veronica (needs to be a git repo)
+    # Start OpenCode headless from ~/.veronica
     typer.echo("Starting OpenCode server...")
-    if not (cfg.veronica_dir / ".git").exists():
-        subprocess.run(["git", "init", str(cfg.veronica_dir)], capture_output=True)
-        subprocess.run(["git", "-C", str(cfg.veronica_dir), "add", "-A"], capture_output=True)
-        subprocess.run(["git", "-C", str(cfg.veronica_dir), "commit", "-m", "init"], capture_output=True)
     oc_proc = subprocess.Popen(
         ["opencode", "serve", "--port", str(cfg.opencode_port)],
         cwd=str(cfg.veronica_dir),
