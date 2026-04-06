@@ -1,0 +1,15 @@
+# Agentfield control plane configuration
+# Runs on macOS host, Go daemon in Lima VM connects back
+
+server:
+  host: 0.0.0.0
+  port: 8090
+
+# Agent registration
+agents:
+  # Go daemon registers dynamically on startup from Lima VM
+  # Python behavior agents register dynamically via CLI
+
+# Logging
+log:
+  level: info
