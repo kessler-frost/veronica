@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import typer
@@ -54,9 +55,12 @@ def _sync_to_vm():
 
 
 def _load_behaviors() -> dict:
+    """Load behaviors.json. Format:
+    {"behaviors": {"<uuid>": {"description": "...", "config": null | {...}}}}
+    """
     if cfg.behaviors_file.exists():
         return json.loads(cfg.behaviors_file.read_text())
-    return {"behaviors": []}
+    return {"behaviors": {}}
 
 
 def _save_behaviors(data: dict) -> None:
@@ -105,21 +109,25 @@ def start():
 
     # 4. Start behavior agents
     data = _load_behaviors()
-    behaviors = data.get("behaviors", [])
+    behaviors = data.get("behaviors", {})
 
     async def _run():
         from veronica.agent import create_behavior_agent
 
         agents = []
-        for behavior in behaviors:
-            name = behavior.lower().replace(" ", "-")[:30]
-            typer.echo(f"  Starting agent: {name}")
+        for agent_id, info in behaviors.items():
+            desc = info["description"]
+            existing_config = info.get("config")
+            configured = "configured" if existing_config else "will self-configure"
+            typer.echo(f"  Starting agent {agent_id[:8]}... ({configured})")
             agent = create_behavior_agent(
-                name=name,
-                behavior=behavior,
+                agent_id=agent_id,
+                behavior=desc,
                 agentfield_url=cfg.agentfield_url,
                 lm_studio_url=cfg.lm_studio_url,
                 lm_studio_model=cfg.lm_studio_model,
+                behaviors_file=cfg.behaviors_file,
+                existing_config=existing_config,
             )
             agents.append(agent)
 
@@ -185,10 +193,18 @@ def status():
 
     # Behaviors
     data = _load_behaviors()
-    behaviors = data.get("behaviors", [])
+    behaviors = data.get("behaviors", {})
     typer.echo(f"\nBehaviors: {len(behaviors)}")
-    for i, b in enumerate(behaviors, 1):
-        typer.echo(f"  {i}. {b}")
+    for agent_id, info in behaviors.items():
+        desc = info["description"]
+        config = info.get("config")
+        typer.echo(f"  {agent_id[:8]}  {desc}")
+        if config:
+            subs = config.get("subscriptions", [])
+            comms = config.get("comm_filter", [])
+            typer.echo(f"           events={subs} comm_filter={comms}")
+        else:
+            typer.echo(f"           (will self-configure on first boot)")
 
 
 @app.command()
@@ -281,40 +297,56 @@ def vm_ssh():
 def add(description: str = typer.Argument(help="Natural language behavior description")):
     """Add a behavior to Veronica."""
     data = _load_behaviors()
-    data.setdefault("behaviors", []).append(description)
+    agent_id = str(uuid.uuid4())
+    data.setdefault("behaviors", {})[agent_id] = {
+        "description": description,
+        "config": None,
+    }
     _save_behaviors(data)
-    typer.echo(f"Added: {description}")
-    typer.echo("Run `veronica start` to activate.")
+    typer.echo(f"Added [{agent_id[:8]}]: {description}")
+    typer.echo("Run `veronica start` to activate. Agent will self-configure on first boot.")
 
 
 @app.command("list")
 def list_behaviors():
-    """List all behaviors."""
+    """List all behaviors and their configuration."""
     data = _load_behaviors()
-    behaviors = data.get("behaviors", [])
+    behaviors = data.get("behaviors", {})
 
     if not behaviors:
         typer.echo("No behaviors. Run `veronica add \"...\"` to add one.")
         return
 
-    for i, b in enumerate(behaviors, 1):
-        typer.echo(f"  {i}. {b}")
+    for agent_id, info in behaviors.items():
+        desc = info["description"]
+        config = info.get("config")
+        typer.echo(f"  {agent_id[:8]}  {desc}")
+        if config:
+            subs = config.get("subscriptions", [])
+            comms = config.get("comm_filter", [])
+            typer.echo(f"           events={subs} comm_filter={comms}")
+        else:
+            typer.echo(f"           (will self-configure on first boot)")
 
 
 @app.command()
-def rm(description: str = typer.Argument(help="Behavior text to remove (partial match)")):
-    """Remove a behavior."""
+def rm(description: str = typer.Argument(help="Behavior text or UUID prefix to remove")):
+    """Remove a behavior by description (partial match) or UUID prefix."""
     data = _load_behaviors()
-    behaviors = data.get("behaviors", [])
-    matches = [b for b in behaviors if description.lower() in b.lower()]
+    behaviors = data.get("behaviors", {})
 
-    if not matches:
+    # Try UUID prefix match first, then description match
+    to_remove = []
+    for agent_id, info in behaviors.items():
+        if agent_id.startswith(description) or description.lower() in info["description"].lower():
+            to_remove.append(agent_id)
+
+    if not to_remove:
         typer.echo(f"No behavior matching '{description}'")
         return
 
-    for m in matches:
-        behaviors.remove(m)
-        typer.echo(f"Removed: {m}")
+    for agent_id in to_remove:
+        desc = behaviors.pop(agent_id)["description"]
+        typer.echo(f"Removed [{agent_id[:8]}]: {desc}")
 
-    data["behaviors"] = behaviors
     _save_behaviors(data)
