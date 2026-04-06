@@ -24,6 +24,9 @@ app.add_typer(vm_app, name="vm")
 
 cfg = VeronicaConfig()
 
+
+# --- Helpers ---
+
 def _vm_running() -> bool:
     result = subprocess.run(["limactl", "list", "--json"], capture_output=True, text=True)
     for line in result.stdout.strip().splitlines():
@@ -60,23 +63,6 @@ def _load_behaviors() -> dict:
     return {"behaviors": [], "subagents": {}}
 
 
-
-
-
-def _parse_veronica_config(messages: list) -> dict | None:
-    """Extract VERONICA_CONFIG JSON from OpenCode message history."""
-    for msg in messages:
-        for part in msg.get("parts", []):
-            text = part.get("text", "")
-            if "VERONICA_CONFIG:" in text:
-                for line in text.split("\n"):
-                    line = line.strip()
-                    if line.startswith("VERONICA_CONFIG:"):
-                        payload = line[len("VERONICA_CONFIG:"):]
-                        return json.loads(payload)
-    return None
-
-
 def _save_behaviors(data: dict) -> None:
     cfg.veronica_dir.mkdir(parents=True, exist_ok=True)
     cfg.behaviors_file.write_text(json.dumps(data, indent=2))
@@ -96,7 +82,6 @@ def _setup_opencode_config():
     """Create ~/.veronica/.opencode/opencode.json with MCP config."""
     oc_dir = cfg.opencode_config_dir
     oc_dir.mkdir(parents=True, exist_ok=True)
-
     oc_config = {
         "mcp": {
             "veronica": {
@@ -108,50 +93,51 @@ def _setup_opencode_config():
     (oc_dir / "opencode.json").write_text(json.dumps(oc_config, indent=2))
 
 
-# --- Top-level commands ---
+# --- Core commands ---
 
 @app.command()
 def start():
-    """Start VM, daemon, MCP server, OpenCode, and event watcher."""
+    """Start everything: VM, daemon, MCP server, OpenCode, and event watcher."""
     if _veronica_already_running():
-        typer.echo("Another veronica process is already running. Run `veronica stop` first.", err=True)
+        typer.echo("Veronica is already running. Run `veronica stop` first.", err=True)
         raise typer.Exit(1)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+    # 1. VM
     if not _vm_running():
-        typer.echo(f"Starting Lima VM {cfg.vm_name!r}...")
+        typer.echo("Starting VM...")
         subprocess.run(["limactl", "start", cfg.vm_name], check=True)
-    else:
-        typer.echo(f"Lima VM {cfg.vm_name!r} already running.")
 
+    # 2. Daemon
     typer.echo("Starting daemon...")
     _vm_shell("sudo", "systemctl", "start", "veronica")
 
-    # Setup OpenCode config
+    # 3. OpenCode config
     _setup_opencode_config()
 
-    # Start MCP server in background thread
-    typer.echo(f"Starting MCP server on port {cfg.mcp_port}...")
+    # 4. MCP server (background thread)
+    typer.echo("Starting MCP server...")
     mcp_thread = threading.Thread(target=run_mcp_server, args=(cfg.mcp_port, cfg.nats_url), daemon=True)
     mcp_thread.start()
 
-    # Start OpenCode headless from ~/.veronica
-    typer.echo("Starting OpenCode server...")
+    # 5. OpenCode (background process)
+    typer.echo("Starting OpenCode...")
+    cfg.veronica_dir.mkdir(parents=True, exist_ok=True)
     oc_proc = subprocess.Popen(
         ["opencode", "serve", "--port", str(cfg.opencode_port)],
         cwd=str(cfg.veronica_dir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    time.sleep(3)
 
-    time.sleep(3)  # Wait for OpenCode server to start
-
+    # 6. Create sessions and start watcher
     async def _run():
         client = OpenCodeClient(base_url=cfg.opencode_url)
         data = _load_behaviors()
 
-        # Create watcher early so MCP subscribe_events tool can update routing
+        # Watcher (created early so MCP subscribe tool can update routing)
         watcher = EventWatcher(
             nats_url=cfg.nats_url, opencode=client,
             provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
@@ -159,33 +145,25 @@ def start():
         watcher.set_routing(data.get("subagents", {}))
         set_watcher(watcher, cfg.behaviors_file)
 
-        # For each behavior, create a session and ask it to subscribe
+        # Create a session per behavior (skip if already exists)
         for behavior in data.get("behaviors", []):
-            # Check if session already exists
-            matching = [
-                name for name, sa in data.get("subagents", {}).items()
-                if sa.get("behavior") == behavior
-            ]
-            if matching:
-                typer.echo(f"Already active: {matching[0]}")
+            existing = [n for n, sa in data.get("subagents", {}).items() if sa.get("behavior") == behavior]
+            if existing:
+                typer.echo(f"  Active: {existing[0]}")
                 continue
 
-            # Create a session for this behavior
             name = behavior.lower().replace(" ", "-")[:30]
             session = await client.create_session()
-            config = {
+            data.setdefault("subagents", {})[name] = {
                 "name": name,
                 "session_id": session["id"],
                 "behavior": behavior,
                 "subscriptions": [],
                 "comm_filter": [],
             }
-            data.setdefault("subagents", {})[name] = config
             _save_behaviors(data)
+            typer.echo(f"  New: {name}")
 
-            typer.echo(f"  {name} → session {session['id']}")
-
-            # Tell it to subscribe to events
             await client.send_message(
                 session["id"],
                 f"You are a Veronica eBPF agent. Your behavior: {behavior}\n\n"
@@ -196,10 +174,10 @@ def start():
                 provider_id=cfg.opencode_provider, model_id=cfg.opencode_model,
             )
 
-        # Start event watcher (already created above, routing may have been updated by subscribe_events)
         await watcher.start()
+        n = len(data.get("subagents", {}))
+        typer.echo(f"\nVeronica running with {n} agent{'s' if n != 1 else ''} (Ctrl+C to stop)")
 
-        typer.echo(f"Veronica running with {len(data.get('subagents', {}))} subagents (Ctrl+C to stop)...")
         stop = asyncio.Event()
         try:
             await stop.wait()
@@ -211,14 +189,15 @@ def start():
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        typer.echo("Shutting down...")
+        typer.echo("\nShutting down...")
     finally:
         oc_proc.terminate()
 
 
 @app.command()
 def stop():
-    """Stop Veronica and daemon service."""
+    """Stop everything: Veronica, OpenCode, and daemon."""
+    # Stop Veronica process
     result = subprocess.run(["pgrep", "-f", "veronica start"], capture_output=True, text=True)
     our_pid = os.getpid()
     for line in result.stdout.strip().splitlines():
@@ -226,19 +205,48 @@ def stop():
         if pid != our_pid:
             os.kill(pid, 9)
             typer.echo(f"Stopped Veronica (pid {pid})")
-    # Kill OpenCode server
+
+    # Stop OpenCode
     subprocess.run(["pkill", "-f", "opencode serve"], capture_output=True)
+    typer.echo("Stopped OpenCode")
+
+    # Stop daemon
     typer.echo("Stopping daemon...")
     _vm_shell("sudo", "systemctl", "stop", "veronica")
 
 
 @app.command()
 def status():
-    """Show VM and daemon status."""
-    typer.echo("=== Lima VM ===")
-    subprocess.run(["limactl", "list", cfg.vm_name])
-    typer.echo("\n=== Daemon ===")
-    _vm_shell("sudo", "systemctl", "status", "veronica", check=False)
+    """Show status of all components."""
+    # VM
+    if _vm_running():
+        typer.echo("VM:      running")
+    else:
+        typer.echo("VM:      stopped")
+
+    # Daemon
+    result = subprocess.run(
+        ["limactl", "shell", cfg.vm_name, "--", "sudo", "systemctl", "is-active", "veronica"],
+        capture_output=True, text=True,
+    )
+    daemon_status = result.stdout.strip() if result.returncode == 0 else "stopped"
+    typer.echo(f"Daemon:  {daemon_status}")
+
+    # OpenCode
+    result = subprocess.run(["pgrep", "-f", "opencode serve"], capture_output=True, text=True)
+    typer.echo(f"OpenCode: {'running' if result.stdout.strip() else 'stopped'}")
+
+    # Behaviors
+    data = _load_behaviors()
+    behaviors = data.get("behaviors", [])
+    subagents = data.get("subagents", {})
+    typer.echo(f"\nBehaviors: {len(behaviors)}")
+    for i, b in enumerate(behaviors, 1):
+        name = next((n for n, sa in subagents.items() if sa.get("behavior") == b), None)
+        subs = subagents.get(name, {}).get("subscriptions", []) if name else []
+        typer.echo(f"  {i}. {b}")
+        if subs:
+            typer.echo(f"     → {name} listening on {subs}")
 
 
 @app.command()
@@ -247,6 +255,8 @@ def logs():
     limactl = subprocess.run(["which", "limactl"], capture_output=True, text=True).stdout.strip()
     os.execv(limactl, ["limactl", "shell", cfg.vm_name, "--", "sudo", "journalctl", "-u", "veronica", "-f"])
 
+
+# --- Build commands ---
 
 @app.command()
 def build():
@@ -267,7 +277,7 @@ def run(ctx: typer.Context):
 
 @app.command()
 def setup():
-    """Full setup: sync source, eBPF compile, build, install service."""
+    """Full first-time setup: sync source, compile eBPF, build daemon, install service."""
     if not _vm_running():
         typer.echo("VM not running — run `veronica vm start` first", err=True)
         raise typer.Exit(1)
@@ -291,11 +301,11 @@ def setup():
     typer.echo("Setup complete. Run `veronica start`.")
 
 
-# --- VM subcommands ---
+# --- VM commands ---
 
 @vm_app.command("start")
 def vm_start():
-    """Start the Lima VM."""
+    """Create and start the Lima VM."""
     result = subprocess.run(["limactl", "list", "--json"], capture_output=True, text=True)
     exists = any(
         json.loads(line).get("name") == cfg.vm_name
@@ -331,30 +341,32 @@ def add(description: str = typer.Argument(help="Natural language behavior descri
     data = _load_behaviors()
     data["behaviors"].append(description)
     _save_behaviors(data)
-    typer.echo(f"Added: {description} (will create agent on next `veronica start`)")
+    typer.echo(f"Added: {description}")
+    typer.echo("Run `veronica start` to activate.")
 
 
 @app.command("list")
 def list_behaviors():
-    """List all behaviors."""
+    """List all behaviors and their status."""
     data = _load_behaviors()
     behaviors = data.get("behaviors", [])
     subagents = data.get("subagents", {})
 
     if not behaviors:
-        typer.echo("No behaviors configured. Run `veronica add \"...\"` to add one.")
+        typer.echo("No behaviors. Run `veronica add \"...\"` to add one.")
         return
 
-    typer.echo(f"Behaviors ({len(behaviors)}):")
     for i, b in enumerate(behaviors, 1):
-        typer.echo(f"  {i}. {b}")
-
-    if subagents:
-        typer.echo(f"\nSubagents ({len(subagents)}):")
-        for name, config in subagents.items():
-            subs = config.get("subscriptions", [])
-            comms = config.get("comm_filter", [])
-            typer.echo(f"  {name}: events={subs} comms={comms}")
+        name = next((n for n, sa in subagents.items() if sa.get("behavior") == b), None)
+        if name:
+            subs = subagents[name].get("subscriptions", [])
+            comms = subagents[name].get("comm_filter", [])
+            status = f"→ {name} [{', '.join(subs)}]"
+            if comms:
+                status += f" comms={comms}"
+        else:
+            status = "(pending)"
+        typer.echo(f"  {i}. {b} {status}")
 
 
 @app.command()
@@ -368,19 +380,13 @@ def rm(description: str = typer.Argument(help="Behavior text to remove (partial 
         typer.echo(f"No behavior matching '{description}'")
         return
 
+    subagents = data.get("subagents", {})
     for m in matches:
         behaviors.remove(m)
         typer.echo(f"Removed: {m}")
-
-    # Remove associated subagents and their .md files
-    subagents = data.get("subagents", {})
-    for name, sa in list(subagents.items()):
-        if sa.get("behavior") in matches:
-            agent_file = cfg.opencode_config_dir / "agents" / f"{name}.md"
-            if agent_file.exists():
-                agent_file.unlink()
-            del subagents[name]
-            typer.echo(f"  Deleted subagent: {name}")
+        for name, sa in list(subagents.items()):
+            if sa.get("behavior") == m:
+                del subagents[name]
 
     data["behaviors"] = behaviors
     _save_behaviors(data)
