@@ -1,6 +1,8 @@
 # Veronica
 
-> Proactive agents at the kernel level, powered by eBPF + [Agentfield](https://github.com/Agent-Field/agentfield)
+> Convert any operating system into an agentic operating system.
+
+eBPF sees everything the kernel sees. Agentfield gives agents a control plane. Veronica connects the two — your OS becomes a living system where agents observe, reason, and act at the kernel level.
 
 ## Why Agentfield
 
