@@ -50,8 +50,11 @@ async def _nats_request(subject: str, payload: dict, nats_url: str = "nats://loc
 @mcp.tool
 async def exec_command(command: str, reason: str = "") -> str:
     """Run a shell command in the VM. Use for file ops, package installs, service management."""
+    logger.info("MCP exec_command: %s (%s)", command[:100], reason[:50])
     result = await _nats_request("tools.exec", {"command": command, "reason": reason})
-    return result.get("data", result.get("error", str(result)))
+    output = result.get("data", result.get("error", str(result)))
+    logger.info("MCP exec_command result: %s", output[:100])
+    return output
 
 
 @mcp.tool
