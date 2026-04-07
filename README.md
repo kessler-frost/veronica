@@ -1,8 +1,8 @@
 # Veronica
 
-> Convert any operating system into an agentic operating system.
+> What if your operating system could think?
 
-eBPF sees everything the kernel sees. Agentfield gives agents a control plane. Veronica connects the two — your OS becomes a living system where agents observe, reason, and act at the kernel level.
+This is an experiment to stress test what AI agents can actually do when given kernel-level access via eBPF. I don't know if this is useful — it's about answering the "what if?" question, especially if done right.
 
 ## Why Agentfield
 
