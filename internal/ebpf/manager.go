@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -167,9 +168,11 @@ func (m *Manager) parseEvent(data []byte) *event.Event {
 			args = readCmdline(e.Header.PID)
 		}
 		cwd := readCwd(e.Header.PID)
+		ppid := readPPID(e.Header.PID)
 		payload, _ := json.Marshal(map[string]any{
 			"comm": e.Header.CommString(), "filename": FilenameString(e.Filename),
-			"uid": e.Header.UID, "pid": e.Header.PID, "cmdline": args, "cwd": cwd,
+			"uid": e.Header.UID, "pid": e.Header.PID, "ppid": ppid,
+			"cmdline": args, "cwd": cwd,
 		})
 		return &event.Event{
 			Type:     "process_exec",
@@ -236,6 +239,40 @@ func (m *Manager) Close() error {
 		l.Close()
 	}
 	return nil
+}
+
+// procBasePath is the base path for /proc. Tests override this to use temp directories.
+var procBasePath = "/proc"
+
+// readPPID reads the parent PID from /proc/<pid>/stat.
+// The stat file format is: pid (comm) state ppid ...
+// The comm field may contain spaces and parentheses, so we find the last ')' to skip it.
+// Returns 0 on any error.
+func readPPID(pid uint32) uint32 {
+	data, err := os.ReadFile(fmt.Sprintf("%s/%d/stat", procBasePath, pid))
+	if err != nil {
+		return 0
+	}
+
+	// Find the last ')' which closes the comm field — everything after is space-separated fields
+	closeParen := bytes.LastIndexByte(data, ')')
+	if closeParen < 0 || closeParen+2 >= len(data) {
+		return 0
+	}
+
+	// After ')' comes: " state ppid ..."
+	rest := string(data[closeParen+2:]) // skip ") "
+	fields := strings.Fields(rest)
+	if len(fields) < 2 {
+		return 0
+	}
+
+	// fields[0] = state, fields[1] = ppid
+	ppid, err := strconv.ParseUint(fields[1], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(ppid)
 }
 
 // readCwd reads the current working directory for a process.
