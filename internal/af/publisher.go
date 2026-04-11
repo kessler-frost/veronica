@@ -20,9 +20,9 @@ import (
 
 // Subscriber is a behavior agent that has registered for specific events.
 type Subscriber struct {
-	NodeID      string   `json:"node_id"`      // e.g. "veronica-a1b2c3d4"
-	Events      []string `json:"events"`        // e.g. ["process_exec", "file_open"]
-	CommFilter  []string `json:"comm_filter"`   // e.g. ["mkdir", "chmod"] — empty = all
+	NodeID     string   `json:"node_id"`     // e.g. "veronica-a1b2c3d4"
+	Events     []string `json:"events"`      // e.g. ["process_exec", "file_open"]
+	CommFilter []string `json:"comm_filter"` // e.g. ["mkdir", "chmod"] — empty = all
 }
 
 // Publisher classifies eBPF events and pushes them only to subscribed

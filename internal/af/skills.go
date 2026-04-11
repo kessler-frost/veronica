@@ -385,8 +385,8 @@ func result(ok bool, data, errMsg string) map[string]any {
 	return m
 }
 
-func okResult(data string) (any, error)    { return result(true, data, ""), nil }
-func errResult(msg string) (any, error)    { return result(false, "", msg), nil }
+func okResult(data string) (any, error)          { return result(true, data, ""), nil }
+func errResult(msg string) (any, error)          { return result(false, "", msg), nil }
 func errResultf(f string, a ...any) (any, error) { return errResult(fmt.Sprintf(f, a...)) }
 
 func parseInput[T any](input map[string]any) (T, error) {
@@ -451,14 +451,6 @@ func handleUnsubscribe(pub *Publisher) func(ctx context.Context, input map[strin
 }
 
 // --- Other handlers ---
-	var req T
-	data, err := json.Marshal(input)
-	if err != nil {
-		return req, err
-	}
-	err = json.Unmarshal(data, &req)
-	return req, err
-}
 
 func handleExec(tracker *PIDTracker) func(ctx context.Context, input map[string]any) (any, error) {
 	return func(ctx context.Context, input map[string]any) (any, error) {

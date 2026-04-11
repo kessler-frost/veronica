@@ -53,6 +53,13 @@ Write the minimum code to make tests pass. Follow existing patterns exactly:
 
 ### 4. Run tests (TDD verify)
 
+**CRITICAL: Always set Go env vars before any Go command:**
+```bash
+export GONOSUMCHECK='github.com/Agent-Field/*'
+export GONOSUMDB='github.com/Agent-Field/*'
+export GOPRIVATE='github.com/Agent-Field/*'
+```
+
 ```bash
 # Go tests
 go test ./internal/af/ -v -count=1
