@@ -1,0 +1,30 @@
+commands:
+  install_go: cd /Users/fimbulwinter/dev/veronica && go mod tidy
+  install_python: cd /Users/fimbulwinter/dev/veronica && uv sync
+  test_go: cd /Users/fimbulwinter/dev/veronica && go test ./internal/af/ ./internal/classifier/ -v -count=1
+  test_python: cd /Users/fimbulwinter/dev/veronica && uv run pytest -v
+  test_all: cd /Users/fimbulwinter/dev/veronica && go test ./internal/af/ ./internal/classifier/ -v -count=1 && uv run pytest -v
+  build_daemon: cd /Users/fimbulwinter/dev/veronica && uv run veronica build
+  lint_go: cd /Users/fimbulwinter/dev/veronica && go vet ./internal/...
+
+services:
+  lima_vm:
+    start: limactl start veronica
+    stop: limactl stop veronica
+    healthcheck: limactl shell veronica -- echo ok
+    port: 59556
+    depends_on: []
+
+  agentfield:
+    start: af server &
+    stop: "pkill -f 'af server' || true"
+    healthcheck: curl -sf http://localhost:8090/api/nodes || true
+    port: 8090
+    depends_on: []
+
+  daemon:
+    start: limactl shell veronica -- sudo systemctl start veronicad
+    stop: limactl shell veronica -- sudo systemctl stop veronicad
+    healthcheck: limactl shell veronica -- sudo systemctl is-active veronicad
+    port: 0
+    depends_on: [lima_vm, agentfield]
