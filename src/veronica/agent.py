@@ -95,11 +95,11 @@ def create_behavior_agent(
     agent_id: str,
     behavior: str,
     agentfield_url: str,
-    lm_studio_url: str,
-    lm_studio_model: str,
+    llm_url: str,
+    llm_model: str,
     behaviors_file: Path,
     existing_config: dict | None = None,
-    lm_api_key: str | None = None,
+    llm_api_key: str | None = None,
 ) -> Agent:
     """Create an Agentfield agent for a user-defined behavior.
 
@@ -111,9 +111,9 @@ def create_behavior_agent(
         node_id=f"veronica-{agent_id}",
         version="0.2.0",
         ai_config=AIConfig(
-            model=f"openai/{lm_studio_model}",
-            api_base=lm_studio_url,
-            api_key=lm_api_key,
+            model=f"openai/{llm_model}",
+            api_base=llm_url,
+            api_key=llm_api_key,
         ),
         agentfield_server=agentfield_url,
     )

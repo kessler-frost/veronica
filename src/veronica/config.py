@@ -9,9 +9,9 @@ class VeronicaConfig(BaseSettings):
     model_config = {"env_prefix": "VERONICA_", "env_nested_delimiter": "__"}
 
     agentfield_url: str = "http://localhost:8090"
-    lm_studio_url: str = "http://localhost:1234"
-    lm_studio_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
-    lm_api_key: str | None = None
+    llm_url: str = "http://localhost:1234"
+    llm_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
+    llm_api_key: str | None = None
     vm_name: str = "veronica"
     lima_config: str = "lima/veronica.yaml"
     daemon_pkg: str = "./cmd/veronicad/"

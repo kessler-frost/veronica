@@ -124,11 +124,11 @@ def start():
                 agent_id=agent_id,
                 behavior=desc,
                 agentfield_url=cfg.agentfield_url,
-                lm_studio_url=cfg.lm_studio_url,
-                lm_studio_model=cfg.lm_studio_model,
+                llm_url=cfg.llm_url,
+                llm_model=cfg.llm_model,
                 behaviors_file=cfg.behaviors_file,
                 existing_config=existing_config,
-                lm_api_key=cfg.lm_api_key,
+                llm_api_key=cfg.llm_api_key,
             )
             agents.append(agent)
 

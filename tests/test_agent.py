@@ -32,8 +32,8 @@ def test_notify_in_system_prompt():
         agent_id="test",
         behavior="test behavior",
         agentfield_url="http://localhost:8090",
-        lm_studio_url="http://localhost:1234",
-        lm_studio_model="test-model",
+        llm_url="http://localhost:1234",
+        llm_model="test-model",
         behaviors_file=Path("/dev/null"),
     )
     # The system prompt is built from DAEMON_SKILLS via ', '.join(DAEMON_SKILLS)
