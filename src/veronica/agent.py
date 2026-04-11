@@ -22,7 +22,7 @@ VALID_EVENTS = ["process_exec", "process_exit", "file_open", "net_connect"]
 EVENT_SCHEMA = {
     "process_exec": {
         "description": "Fires when a new process starts (sched_process_exec tracepoint)",
-        "data_fields": {"comm": "process name", "cmdline": "full command line", "pid": "process ID", "uid": "user ID", "filename": "executable path"},
+        "data_fields": {"comm": "process name", "cmdline": "full command line", "pid": "process ID", "uid": "user ID", "filename": "executable path", "ppid": "parent process ID (shell PID for terminal notification)"},
     },
     "process_exit": {
         "description": "Fires when a process exits (sched_process_exit tracepoint)",
@@ -40,7 +40,7 @@ EVENT_SCHEMA = {
 
 DAEMON_SKILLS = [
     "subscribe", "unsubscribe",
-    "exec", "enforce", "transform", "schedule", "measure",
+    "exec", "enforce", "transform", "schedule", "measure", "notify",
     "map_read", "map_write", "map_delete",
     "program_list", "program_load", "program_detach",
 ]
