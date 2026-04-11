@@ -128,6 +128,7 @@ def start():
                 lm_studio_model=cfg.lm_studio_model,
                 behaviors_file=cfg.behaviors_file,
                 existing_config=existing_config,
+                lm_api_key=cfg.lm_api_key,
             )
             agents.append(agent)
 

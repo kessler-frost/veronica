@@ -13,6 +13,11 @@ def test_defaults():
     assert cfg.veronica_dir == Path.home() / ".veronica"
 
 
+def test_lm_api_key_defaults_to_none():
+    cfg = VeronicaConfig()
+    assert cfg.lm_api_key is None
+
+
 def test_behaviors_file():
     cfg = VeronicaConfig()
     assert cfg.behaviors_file == Path.home() / ".veronica" / "behaviors.json"

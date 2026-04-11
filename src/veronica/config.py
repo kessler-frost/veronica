@@ -11,6 +11,7 @@ class VeronicaConfig(BaseSettings):
     agentfield_url: str = "http://localhost:8090"
     lm_studio_url: str = "http://localhost:1234"
     lm_studio_model: str = "mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled"
+    lm_api_key: str | None = None
     vm_name: str = "veronica"
     lima_config: str = "lima/veronica.yaml"
     daemon_pkg: str = "./cmd/veronicad/"

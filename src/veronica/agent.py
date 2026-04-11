@@ -99,6 +99,7 @@ def create_behavior_agent(
     lm_studio_model: str,
     behaviors_file: Path,
     existing_config: dict | None = None,
+    lm_api_key: str | None = None,
 ) -> Agent:
     """Create an Agentfield agent for a user-defined behavior.
 
@@ -112,6 +113,7 @@ def create_behavior_agent(
         ai_config=AIConfig(
             model=f"openai/{lm_studio_model}",
             api_base=lm_studio_url,
+            api_key=lm_api_key,
         ),
         agentfield_server=agentfield_url,
     )
