@@ -1,0 +1,57 @@
+{
+  "milestone": "notify-core",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "cd /Users/fimbulwinter/dev/veronica && . .factory/init.sh && go test ./internal/af/ ./internal/classifier/ -v -count=1 && uv run pytest -v",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "cd /Users/fimbulwinter/dev/veronica && . .factory/init.sh && go test ./internal/af/ ./internal/classifier/ -run '^$' -count=1",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "cd /Users/fimbulwinter/dev/veronica && . .factory/init.sh && go vet ./internal/...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "services.yaml",
+      "description": "Added `test_go_ebpf` and `lint_go_ebpf` commands so scrutiny and workers can run ebpf-scoped validation explicitly.",
+      "sourceFeature": "ppid-enrichment"
+    },
+    {
+      "target": "library",
+      "description": "Updated `.factory/library/architecture.md` to reflect that `notify` is implemented (no longer planned), including behavior and test coverage notes.",
+      "sourceFeature": "python-notify-integration"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "notify-worker skill",
+      "suggestion": "Narrow validator guidance to feature scope (e.g., ebpf-only features should not require `internal/af` validation) and reference services commands that match fulfills assertions.",
+      "evidence": "ppid-enrichment review observed validator mismatch and worker transcript shows unrelated `internal/af` validation attempts before ebpf work.",
+      "isSystemic": true
+    },
+    {
+      "target": "notify-worker skill",
+      "suggestion": "Make TDD-red-phase adherence explicit in completion criteria (or relax requirement) so transcript order and `skillFeedback.followedProcedure` stay consistent.",
+      "evidence": "python-notify-integration review found code edits before test creation despite skill step requiring tests-first, while handoff reported procedure followed.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

@@ -1,0 +1,26 @@
+{
+  "featureId": "ppid-enrichment",
+  "reviewedAt": "2026-04-11T20:53:01Z",
+  "commitId": "0d0205b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature implementation matches the requested behavior: process_exec payloads now include numeric ppid, readPPID parses /proc/<pid>/stat robustly across comm edge cases using the closing ')' boundary, and tests cover required success/error scenarios plus payload round-trip checks without regressions to existing fields.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The notify-worker skill procedure is over-broad for ebpf-only features: it directs workers to run internal/af-focused validations even when the feature touches only internal/ebpf, which causes unrelated failures/workarounds and noisy execution.",
+      "evidence": "worker-transcripts.jsonl entry for session 0f5e61a2-c512-40a0-a28e-1a0127efd88d shows early attempts to run go test ./internal/af and go mod tidy before ebpf work; handoff.skillFeedback.suggestedChanges also calls out this mismatch explicitly."
+    },
+    {
+      "area": "services",
+      "observation": ".factory/services.yaml does not include ebpf-scoped test/vet commands even though this mission's validation contract requires them for ppid enrichment.",
+      "evidence": "validation-contract.md VAL-EVT-002/003/004 references go test ./internal/ebpf and go vet ./internal/ebpf, while .factory/services.yaml only defines test_go for ./internal/af ./internal/classifier and lint_go for ./internal/...."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review outcome: pass. I found no blocking correctness or security defects in the ppid-enrichment implementation; behavior and tests align with the feature contract."
+}

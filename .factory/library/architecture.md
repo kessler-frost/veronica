@@ -93,6 +93,6 @@ ring buffer ──► Go daemon (parse + enrich from /proc)
 - **Bidirectional over Agentfield.** The daemon pushes events to agents; agents call skills on the daemon. One protocol, no bridging layers.
 - **Self-configuring agents.** A behavior agent with no prior config will ask the LLM to determine its subscriptions before participating in the event loop.
 
-## Planned: Notify Skill
+## Notify Skill
 
-A new `notify` daemon skill that writes messages to a target process's stdout by opening `/proc/<pid>/fd/1`. This gives behavior agents a way to surface information directly in the user's terminal — closing the loop from kernel observation through LLM reasoning to user-visible output, without requiring a separate notification channel. The notify skill fits alongside the existing skill set (exec, enforce, transform, etc.) as another action a behavior agent can invoke after reasoning about an event.
+`notify` is now part of the daemon skill surface. It writes `[veronica] <message>\n` directly to a target process terminal via `/proc/<pid>/fd/1`, with PID and message validation, structured `ToolResult` responses, and unit test coverage in `internal/af/notify_test.go`. This enables the full process_exec → agent reasoning → terminal feedback loop by targeting the parent shell PID (`ppid`) carried in process_exec payloads.

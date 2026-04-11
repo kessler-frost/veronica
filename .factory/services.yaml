@@ -2,8 +2,10 @@ commands:
   install_go: cd /Users/fimbulwinter/dev/veronica && go mod tidy
   install_python: cd /Users/fimbulwinter/dev/veronica && uv sync
   test_go: cd /Users/fimbulwinter/dev/veronica && go test ./internal/af/ ./internal/classifier/ -v -count=1
+  test_go_ebpf: cd /Users/fimbulwinter/dev/veronica && go test ./internal/ebpf/ -v -count=1
   test_python: cd /Users/fimbulwinter/dev/veronica && uv run pytest -v
   test_all: cd /Users/fimbulwinter/dev/veronica && go test ./internal/af/ ./internal/classifier/ -v -count=1 && uv run pytest -v
+  lint_go_ebpf: cd /Users/fimbulwinter/dev/veronica && go vet ./internal/ebpf/...
   build_daemon: cd /Users/fimbulwinter/dev/veronica && uv run veronica build
   lint_go: cd /Users/fimbulwinter/dev/veronica && go vet ./internal/...
 

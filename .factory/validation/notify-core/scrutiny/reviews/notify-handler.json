@@ -1,0 +1,15 @@
+{
+  "featureId": "notify-handler",
+  "reviewedAt": "2026-04-11T20:53:29Z",
+  "commitId": "038c9e4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation matches the feature contract: notify is registered, uses parseInput/okResult/errResult pattern, validates PID/message, logs before write, writes a single formatted payload to /proc/<pid>/fd/1, and closes the fd. Added tests cover the required happy path and failure scenarios, including concurrent writes.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, commit diff, transcript skeleton, and skill guidance for notify-handler. No high-confidence correctness, security, or behavior defects were found for this feature."
+}

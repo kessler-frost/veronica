@@ -1,0 +1,33 @@
+{
+  "featureId": "python-notify-integration",
+  "reviewedAt": "2026-04-11T20:53:13Z",
+  "commitId": "e77a9e7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation satisfies the feature behavior: notify is added to DAEMON_SKILLS in the required position, process_exec schema includes ppid, and tests were added for presence/ordering/schema/prompt intent. No blocking correctness or security issues found in the feature code.",
+    "issues": [
+      {
+        "file": "tests/test_agent.py",
+        "line": 29,
+        "severity": "non_blocking",
+        "description": "test_notify_in_system_prompt does not validate the created agent's actual system prompt; it only checks `\", \".join(DAEMON_SKILLS)`. This duplicates `test_notify_in_daemon_skills` and would miss regressions where `create_behavior_agent()` stops embedding DAEMON_SKILLS into the prompt."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "notify-worker skill procedure requires TDD red phase (write tests first and run failing tests), but this worker's transcript shows `Edit` on `src/veronica/agent.py` before creating `tests/test_agent.py`; handoff still marked followedProcedure=true.",
+      "evidence": ".factory/skills/notify-worker/SKILL.md:33-39 requires tests-first; transcript skeleton for workerSessionId 4bb139f5-63d3-4fd5-8935-4f29f5ada29c shows `Tool: Edit` on src/veronica/agent.py before `Tool: Create` tests/test_agent.py."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture library still labels notify as planned, which is stale now that notify has been implemented and integrated.",
+      "evidence": ".factory/library/architecture.md:96-98 (`## Planned: Notify Skill`)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes review with no blocking defects. One non-blocking test-quality issue was found in `test_notify_in_system_prompt`, and two shared-state observations were recorded (skill procedure adherence mismatch and stale architecture note)."
+}
