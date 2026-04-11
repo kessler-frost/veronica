@@ -20,13 +20,13 @@ services:
   agentfield:
     start: af server &
     stop: "pkill -f 'af server' || true"
-    healthcheck: curl -sf http://localhost:8090/api/nodes || true
+    healthcheck: curl -sf http://localhost:8090/api/v1/nodes
     port: 8090
     depends_on: []
 
   daemon:
-    start: limactl shell veronica -- sudo systemctl start veronicad
-    stop: limactl shell veronica -- sudo systemctl stop veronicad
-    healthcheck: limactl shell veronica -- sudo systemctl is-active veronicad
+    start: limactl shell veronica -- sudo systemctl start veronica
+    stop: limactl shell veronica -- sudo systemctl stop veronica
+    healthcheck: limactl shell veronica -- sudo systemctl is-active veronica
     port: 0
     depends_on: [lima_vm, agentfield]

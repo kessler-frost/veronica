@@ -1,0 +1,138 @@
+{
+  "assertionResults": [
+    {
+      "id": "VAL-EVT-002",
+      "status": "pass",
+      "reason": "TestReadPPID passed for normal stat parsing, comm with spaces/parentheses, and non-existent PID returning 0.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-ebpf.txt"
+      ]
+    },
+    {
+      "id": "VAL-EVT-003",
+      "status": "pass",
+      "reason": "TestProcessExecPayloadContainsPPID passed, asserting ppid is present as JSON number and survives marshal/unmarshal round-trip.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-ebpf.txt"
+      ]
+    },
+    {
+      "id": "VAL-EVT-004",
+      "status": "pass",
+      "reason": "readPPID edge subtests passed for kernel PID 1 and malformed/truncated stat cases returning 0; source confirms process_exec always emits ppid from readPPID.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-ebpf.txt",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-checks.json"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-003",
+      "status": "pass",
+      "reason": "TestNotifyFormat passed for multiple messages, validating exact '[veronica] <message>\\n' output.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-004",
+      "status": "pass",
+      "reason": "TestNotifyInvalidPID passed for zero, negative, and non-existent PID cases returning error results.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-005",
+      "status": "pass",
+      "reason": "TestNotifyEmptyMessage passed for empty and whitespace-only inputs returning errors.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-006",
+      "status": "pass",
+      "reason": "TestNotifyNonWritableFd passed, confirming graceful error when target fd cannot be written.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-007",
+      "status": "pass",
+      "reason": "Source inspection confirms handleNotify uses parseInput[NotifyRequest], errResult/errResultf/okResult, and NotifyRequest has json tags.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-checks.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-inspection-host-go.txt"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-008",
+      "status": "pass",
+      "reason": "Invalid PID handling verified by tests (0/negative/non-existent) and source logic (PID non-zero check plus typed parseInput on uint32).",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-checks.json"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-009",
+      "status": "pass",
+      "reason": "TestNotifyClosesFd passed through 100 repeated notify calls; source confirms deferred Close() after OpenFile.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-checks.json"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-010",
+      "status": "pass",
+      "reason": "TestNotifyLogging passed and test logs show 'SKILL notify: pid=... message=...'.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-006",
+      "status": "pass",
+      "reason": "Source inspection shows handleNotify writes directly via os.OpenFile + Write and does not call runTracked/PIDTracker shell execution.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-checks.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/source-inspection-host-go.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "status": "pass",
+      "reason": "TestNotifyConcurrent passed and verified two complete notify lines are present without interleaving.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/host-go/go-test-internal-af-notify.txt"
+      ]
+    }
+  ],
+  "toolsUsed": [
+    "go test",
+    "Read",
+    "Grep",
+    "python3 (evidence/report generation)"
+  ],
+  "frictions": [
+    {
+      "description": "Contract tool names differed slightly from actual tests (e.g., TestPPIDJSON vs TestProcessExecPayloadContainsPPID; TestNotifyNotWritable vs TestNotifyNonWritableFd).",
+      "resolved": true,
+      "resolution": "Mapped each assertion to the equivalent existing host unit test and captured outputs.",
+      "affectedAssertions": [
+        "VAL-EVT-003",
+        "VAL-NOTIFY-006"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 13 assigned host Go assertions: 13 pass, 0 fail, 0 blocked via targeted Go tests and source inspection.",
+  "testedAt": "2026-04-11T21:01:47.416042+00:00",
+  "isolation": {
+    "surface": "host-unit-tests",
+    "missionDir": "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c",
+    "guidanceSection": "Flow Validator Guidance: host-unit-tests"
+  }
+}

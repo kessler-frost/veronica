@@ -1,0 +1,54 @@
+{
+  "groupId": "host-python",
+  "testedAt": "2026-04-11T21:01:14.488017Z",
+  "isolation": {
+    "surface": "host-unit-tests",
+    "missionDir": "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c",
+    "repo": "/Users/fimbulwinter/dev/veronica"
+  },
+  "toolsUsed": [
+    "uv run pytest",
+    "uv run python (AST/source inspection)",
+    "Read/Grep for minimal code inspection"
+  ],
+  "assertionResults": [
+    {
+      "id": "VAL-PY-001",
+      "status": "pass",
+      "reason": "Host tests and source inspection confirm 'notify' is present in DAEMON_SKILLS.",
+      "evidence": [
+        "notify-core/host-python/pytest_notify_assertions.txt",
+        "notify-core/host-python/source_inspection_daemon_skills_and_prompt.txt"
+      ]
+    },
+    {
+      "id": "VAL-PY-002",
+      "status": "pass",
+      "reason": "create_behavior_agent system_prompt is built with ', '.join(DAEMON_SKILLS), and notify is in that list.",
+      "evidence": [
+        "notify-core/host-python/pytest_notify_assertions.txt",
+        "notify-core/host-python/source_inspection_daemon_skills_and_prompt.txt"
+      ]
+    },
+    {
+      "id": "VAL-PY-003",
+      "status": "pass",
+      "reason": "AST inspection confirms receive_event dispatches via app.call(f'veronicad.{action}', **params), so action='notify' routes to veronicad.notify.",
+      "evidence": [
+        "notify-core/host-python/val_py_003_dispatch_inspection.txt"
+      ]
+    },
+    {
+      "id": "VAL-PY-004",
+      "status": "pass",
+      "reason": "Ordering test and source inspection confirm notify is positioned with action skills (measure < notify < map_read).",
+      "evidence": [
+        "notify-core/host-python/pytest_notify_assertions.txt",
+        "notify-core/host-python/source_inspection_daemon_skills_and_prompt.txt"
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Validated 4/4 assigned host Python assertions as pass using targeted pytest and minimal source/AST inspection; no blockers encountered."
+}

@@ -29,3 +29,28 @@ The notify feature writes to `/proc/<pid>/fd/1` inside the Lima VM. Validation r
 **Terminal/VM surface:** Max 1 concurrent validator. The VM is a single shared resource with 4 CPUs and 8GB RAM. Multiple validators starting/stopping the daemon concurrently would cause conflicts.
 
 **Go/Python test surface:** Max 2 concurrent validators. These run on the macOS host (48GB/12 CPUs) and are lightweight, but both may need `go mod tidy` / `uv sync` which can conflict.
+
+## Setup Notes (notify-core)
+
+- Agentfield health endpoint for this version is `http://localhost:8090/api/v1/nodes` (not `/api/nodes`).
+- The VM service unit is `veronica` (not `veronicad`).
+- Reliable startup sequence:
+  1. `af server --port 8090 --open=false`
+  2. `uv run veronica build`
+  3. `limactl shell veronica -- sudo systemctl start veronica`
+
+## Flow Validator Guidance: host-unit-tests
+
+- Surface: macOS host shell only.
+- Allowed resources: repository working tree and local test runners.
+- Off-limits: start/stop VM services, kill shared background services.
+- Run only host-side tests/code inspection (Go unit tests, Python unit tests, static source checks).
+- Use absolute paths and avoid mutating mission files directly.
+
+## Flow Validator Guidance: terminal-vm-e2e
+
+- Surface: Lima VM + local Agentfield API on port 8090.
+- Allowed resources: `limactl shell veronica -- ...`, `curl http://localhost:8090/...`, daemon journal logs.
+- Must not change ports or edit VM config.
+- Keep to one validator on this surface (shared VM + shared control plane).
+- Do not kill global host processes except those started by this validation flow.

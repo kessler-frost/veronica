@@ -1,0 +1,128 @@
+{
+  "groupId": "vm-e2e",
+  "testedAt": "2026-04-11T21:09:54.821657Z",
+  "isolation": {
+    "surface": "terminal-vm-e2e",
+    "guidanceSection": "Flow Validator Guidance: terminal-vm-e2e",
+    "missionDir": "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c",
+    "repo": "/Users/fimbulwinter/dev/veronica",
+    "agentfield": "http://localhost:8090"
+  },
+  "toolsUsed": [
+    "shell",
+    "curl",
+    "limactl",
+    "uv run python (temporary Agentfield probe agents)",
+    "journalctl"
+  ],
+  "assertionResults": [
+    {
+      "id": "VAL-EVT-001",
+      "status": "pass",
+      "reason": "process_exec payloads received through Agentfield included integer ppid values, and ls child pid=256676 carried ppid=256649 matching the parent shell PID.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/capture_received_events.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/cross_agent_state_final.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/cross_target_shell.log"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-001",
+      "status": "pass",
+      "reason": "Agentfield node introspection for veronicad listed reasoner id notify.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/nodes_initial.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/nodes_final.json"
+      ]
+    },
+    {
+      "id": "VAL-NOTIFY-002",
+      "status": "pass",
+      "reason": "Direct notify invocation returned ok=true and target VM shell output contained '[veronica] hello from vm-e2e'.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/notify_call_response.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/target-shell-session-after-notify.log",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/notify_call_timing.json"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-001",
+      "status": "blocked",
+      "reason": "Could not validate the required LLM reasoning stage in full eBPF->LLM->notify pipeline because LM Studio was unreachable on localhost:1234.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/lmstudio_probe_error.txt",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/nodes_final.json"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "status": "pass",
+      "reason": "For ls event pid=256676/ppid=256649, the agent called notify with target_pid=256649 (ppid), and message appeared on shell PID 256649.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/cross_agent_state_final.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/cross_target_shell.log",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/journal_cross_filtered.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "status": "pass",
+      "reason": "After a forced notify failure (pid 99999999, ok=false), the agent processed the next process_exec event and successfully notified target ppid.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/cross_agent_state_final.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/cross_agent_stdout.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "status": "pass",
+      "reason": "Python receive_event payloads captured through Agentfield included data.ppid as numeric values on process_exec events.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/capture_received_events.json",
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/capture_last_event_raw.json"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "status": "blocked",
+      "reason": "Cannot measure event->LLM->notify latency without an available LM Studio runtime; localhost:1234 was unreachable.",
+      "evidence": [
+        "/Users/fimbulwinter/.factory/missions/76ba7ea0-57bc-4f53-bc93-783aca92549c/evidence/notify-core/vm-e2e/lmstudio_probe_error.txt"
+      ]
+    }
+  ],
+  "frictions": [
+    {
+      "description": "`uv run veronica list` failed with AttributeError ('list' object has no attribute 'items') due existing behaviors.json schema mismatch.",
+      "resolved": true,
+      "resolution": "Used temporary Agentfield probe agents instead of CLI behavior orchestration to validate runtime assertions.",
+      "affectedAssertions": [
+        "VAL-CROSS-001",
+        "VAL-CROSS-002",
+        "VAL-CROSS-003",
+        "VAL-CROSS-004",
+        "VAL-CROSS-005"
+      ]
+    },
+    {
+      "description": "Agentfield Python SDK cross-agent calls from the temporary threaded setup emitted 'Event loop is closed' warnings and performed sync fallback, causing duplicated notify writes.",
+      "resolved": true,
+      "resolution": "Validated outcomes using both captured agent state and daemon journal lines; unsubscribed temporary nodes after tests.",
+      "affectedAssertions": [
+        "VAL-CROSS-002",
+        "VAL-CROSS-003"
+      ]
+    }
+  ],
+  "blockers": [
+    {
+      "description": "LM Studio API unavailable at http://localhost:1234, preventing validation of LLM-dependent full pipeline and latency assertions.",
+      "affectedAssertions": [
+        "VAL-CROSS-001",
+        "VAL-CROSS-005"
+      ],
+      "quickFixAttempted": "Retried direct curl probe to /v1/models; connection failed each attempt."
+    }
+  ],
+  "summary": "Tested 8 assigned VM/control-plane assertions: 6 pass, 0 fail, 2 blocked (LLM runtime unavailable)."
+}

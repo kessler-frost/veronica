@@ -1,0 +1,60 @@
+{
+  "milestone": "notify-core",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 25,
+    "passed": 23,
+    "failed": 0,
+    "blocked": 2
+  },
+  "passedAssertions": [
+    "VAL-CROSS-002",
+    "VAL-CROSS-003",
+    "VAL-CROSS-004",
+    "VAL-CROSS-006",
+    "VAL-CROSS-007",
+    "VAL-EVT-001",
+    "VAL-EVT-002",
+    "VAL-EVT-003",
+    "VAL-EVT-004",
+    "VAL-NOTIFY-001",
+    "VAL-NOTIFY-002",
+    "VAL-NOTIFY-003",
+    "VAL-NOTIFY-004",
+    "VAL-NOTIFY-005",
+    "VAL-NOTIFY-006",
+    "VAL-NOTIFY-007",
+    "VAL-NOTIFY-008",
+    "VAL-NOTIFY-009",
+    "VAL-NOTIFY-010",
+    "VAL-PY-001",
+    "VAL-PY-002",
+    "VAL-PY-003",
+    "VAL-PY-004"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "blockedBy": "Could not validate the required LLM reasoning stage in full eBPF->LLM->notify pipeline because LM Studio was unreachable on localhost:1234."
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "blockedBy": "Cannot measure event->LLM->notify latency without an available LM Studio runtime; localhost:1234 was unreachable."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added notify-core setup notes and flow validator isolation guidance sections for host-unit-tests and terminal-vm-e2e.",
+      "source": "setup"
+    },
+    {
+      "target": "services.yaml",
+      "description": "Corrected Agentfield healthcheck endpoint to /api/v1/nodes and daemon service unit from veronicad to veronica.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
