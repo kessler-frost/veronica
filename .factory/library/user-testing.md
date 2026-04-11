@@ -21,7 +21,8 @@ The notify feature writes to `/proc/<pid>/fd/1` inside the Lima VM. Validation r
 
 **Constraints:**
 - macOS has no /proc — all /proc interactions happen in the VM
-- Full E2E requires LM Studio running (for agent reasoning)
+- Full E2E requires a working LLM endpoint (LM Studio at localhost:1234 OR OpenRouter)
+- For OpenRouter: set env vars `VERONICA_LM_STUDIO_URL=https://openrouter.ai/api/v1`, `VERONICA_LM_STUDIO_MODEL=gpt-5.4-mini`, `VERONICA_LM_API_KEY=$OPENROUTER_API_KEY`
 - The VM has 4 CPUs and 8GB RAM
 
 ## Validation Concurrency
