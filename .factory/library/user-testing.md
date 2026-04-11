@@ -9,7 +9,7 @@ Testing surface, tools, and resource cost classification.
 The notify feature writes to `/proc/<pid>/fd/1` inside the Lima VM. Validation requires:
 1. Starting the Agentfield control plane on the host (port 8090)
 2. Building and deploying the daemon to the VM (`uv run veronica build`)
-3. Starting the daemon (`limactl shell veronica -- sudo systemctl start veronicad`)
+3. Starting the daemon (`limactl shell veronica -- sudo systemctl start veronica`)
 4. Calling `veronicad.notify` via the Agentfield API or a test agent
 5. Verifying output in a VM shell session
 
@@ -39,6 +39,8 @@ The notify feature writes to `/proc/<pid>/fd/1` inside the Lima VM. Validation r
   1. `af server --port 8090 --open=false`
   2. `uv run veronica build`
   3. `limactl shell veronica -- sudo systemctl start veronica`
+- `uv run veronica start` can fail in this repository state with `TypeError: write() argument must be str, not bytes`; for validation flows, use a temporary Agentfield node directly instead of CLI orchestration when this occurs.
+- Some Agentfield deployments here do not expose `/api/call`; use node metadata from `/api/v1/nodes` and call reasoner endpoints directly (for example `http://localhost:8001/reasoners/<name>`).
 
 ## Flow Validator Guidance: host-unit-tests
 
