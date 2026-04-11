@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -79,6 +81,14 @@ type ProgramLoadRequest struct {
 type ProgramDetachRequest struct {
 	Pin string `json:"pin"` // pin name under /sys/fs/bpf/
 }
+
+type NotifyRequest struct {
+	PID     uint32 `json:"pid"`
+	Message string `json:"message"`
+}
+
+// procPath is the base path for /proc. Tests override this to a temp directory.
+var procPath = "/proc"
 
 type ToolResult struct {
 	Ok    bool   `json:"ok"`
@@ -348,6 +358,10 @@ func RegisterSkills(ag *agent.Agent, tracker *PIDTracker, maps EBPFMaps, pub *Pu
 	)
 	ag.RegisterReasoner("measure", handleMeasure(tracker),
 		agent.WithDescription("Measure performance counters for a process"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("notify", handleNotify(),
+		agent.WithDescription("Write a notification message to a process terminal"),
 		agent.WithReasonerTags("skill"),
 	)
 	ag.RegisterReasoner("map_read", handleMapRead(maps),
@@ -711,6 +725,40 @@ func handleProgramDetach(tracker *PIDTracker) func(ctx context.Context, input ma
 			return errResult(output)
 		}
 		return okResult(fmt.Sprintf("detached %s", req.Pin))
+	}
+}
+
+func handleNotify() func(ctx context.Context, input map[string]any) (any, error) {
+	return func(ctx context.Context, input map[string]any) (any, error) {
+		req, err := parseInput[NotifyRequest](input)
+		if err != nil {
+			return errResultf("bad request: %v", err)
+		}
+
+		if req.PID == 0 {
+			return errResult("invalid PID: must be a positive non-zero integer")
+		}
+
+		msg := strings.TrimSpace(req.Message)
+		if msg == "" {
+			return errResult("message is required (empty or whitespace-only)")
+		}
+
+		log.Printf("SKILL notify: pid=%d message=%q", req.PID, req.Message)
+
+		fdPath := filepath.Join(procPath, fmt.Sprintf("%d", req.PID), "fd", "1")
+		f, err := os.OpenFile(fdPath, os.O_WRONLY, 0)
+		if err != nil {
+			return errResultf("failed to open %s: %v", fdPath, err)
+		}
+		defer func() { _ = f.Close() }()
+
+		payload := []byte(fmt.Sprintf("[veronica] %s\n", req.Message))
+		if _, err := f.Write(payload); err != nil {
+			return errResultf("failed to write to %s: %v", fdPath, err)
+		}
+
+		return okResult(fmt.Sprintf("notified pid %d", req.PID))
 	}
 }
 
