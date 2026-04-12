@@ -38,12 +38,15 @@ EVENT_SCHEMA = {
     },
 }
 
-DAEMON_SKILLS = [
-    "subscribe", "unsubscribe",
-    "exec", "enforce", "transform", "schedule", "measure", "notify",
-    "map_read", "map_write", "map_delete",
-    "program_list", "program_load", "program_detach",
-]
+def discover_daemon_skills(app: Agent) -> list[str]:
+    """Query the Agentfield control plane for skills registered by the daemon."""
+    result = app.client.discover_capabilities(node_id="veronicad", reasoner="*")
+    skills: list[str] = []
+    if result.json:
+        for cap in result.json.capabilities:
+            for r in cap.reasoners:
+                skills.append(r.id)
+    return skills
 
 
 async def self_configure(app: Agent, behavior: str, agent_id: str, behaviors_file: Path) -> dict:
@@ -119,20 +122,26 @@ def create_behavior_agent(
     )
 
     node_id = f"veronica-{agent_id}"
-
-    system_prompt = (
-        f"You are a Veronica behavior agent. Your behavior: {behavior}\n\n"
-        f"You have access to these daemon skills via the control plane:\n"
-        f"{', '.join(DAEMON_SKILLS)}\n\n"
-        f"Available event types and their fields:\n"
-        f"{msgspec.json.encode(EVENT_SCHEMA).decode()}\n\n"
-        "When you receive an eBPF event, decide if and how to react based on your behavior. "
-        'Respond with a JSON object: {"action": "<skill_name>", "params": {...}} '
-        'or {"action": "none"} if no action needed. Only respond with the JSON, nothing else.'
-    )
+    system_prompt: str | None = None
 
     async def _boot() -> None:
-        """Self-configure (if needed) and subscribe with the daemon."""
+        """Discover daemon skills, self-configure (if needed), and subscribe."""
+        nonlocal system_prompt
+
+        skills = discover_daemon_skills(app)
+        logger.info("agent %s: discovered %d daemon skills: %s", agent_id, len(skills), skills)
+
+        system_prompt = (
+            f"You are a Veronica behavior agent. Your behavior: {behavior}\n\n"
+            f"You have access to these daemon skills via the control plane:\n"
+            f"{', '.join(skills)}\n\n"
+            f"Available event types and their fields:\n"
+            f"{msgspec.json.encode(EVENT_SCHEMA).decode()}\n\n"
+            "When you receive an eBPF event, decide if and how to react based on your behavior. "
+            'Respond with a JSON object: {"action": "<skill_name>", "params": {...}} '
+            'or {"action": "none"} if no action needed. Only respond with the JSON, nothing else.'
+        )
+
         config = existing_config
         if not config:
             logger.info("agent %s: first boot, self-configuring...", agent_id)

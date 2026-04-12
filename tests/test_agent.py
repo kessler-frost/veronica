@@ -1,23 +1,10 @@
-"""tests/test_agent.py — Tests for DAEMON_SKILLS and EVENT_SCHEMA in agent.py."""
+"""tests/test_agent.py — Tests for agent discovery and EVENT_SCHEMA."""
 
-from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock
 
-from veronica.agent import DAEMON_SKILLS, EVENT_SCHEMA, create_behavior_agent
-
-
-def test_notify_in_daemon_skills():
-    """'notify' must be present in the DAEMON_SKILLS list."""
-    assert "notify" in DAEMON_SKILLS
-
-
-def test_daemon_skills_ordering():
-    """'notify' must come after 'measure' and before 'map_read' in DAEMON_SKILLS."""
-    measure_idx = DAEMON_SKILLS.index("measure")
-    notify_idx = DAEMON_SKILLS.index("notify")
-    map_read_idx = DAEMON_SKILLS.index("map_read")
-    assert measure_idx < notify_idx < map_read_idx, (
-        f"Expected measure ({measure_idx}) < notify ({notify_idx}) < map_read ({map_read_idx})"
-    )
+from veronica.agent import EVENT_SCHEMA, discover_daemon_skills
 
 
 def test_ppid_in_event_schema():
@@ -26,16 +13,55 @@ def test_ppid_in_event_schema():
     assert EVENT_SCHEMA["process_exec"]["data_fields"]["ppid"] == "parent process ID (shell PID for terminal notification)"
 
 
-def test_notify_in_system_prompt():
-    """The system prompt built by create_behavior_agent must contain 'notify'."""
-    agent = create_behavior_agent(
-        agent_id="test",
-        behavior="test behavior",
-        agentfield_url="http://localhost:8090",
-        llm_url="http://localhost:1234",
-        llm_model="test-model",
-        behaviors_file=Path("/dev/null"),
+def test_discover_daemon_skills():
+    """discover_daemon_skills extracts reasoner IDs from the control plane."""
+
+    @dataclass
+    class FakeReasoner:
+        id: str
+
+    @dataclass
+    class FakeCapability:
+        reasoners: list
+
+    @dataclass
+    class FakeDiscoveryJSON:
+        capabilities: list
+
+    @dataclass
+    class FakeResult:
+        json: FakeDiscoveryJSON
+
+    fake_result = FakeResult(
+        json=FakeDiscoveryJSON(
+            capabilities=[
+                FakeCapability(reasoners=[
+                    FakeReasoner(id="subscribe"),
+                    FakeReasoner(id="exec"),
+                    FakeReasoner(id="notify"),
+                ]),
+            ]
+        )
     )
-    # The system prompt is built from DAEMON_SKILLS via ', '.join(DAEMON_SKILLS)
-    skills_str = ", ".join(DAEMON_SKILLS)
-    assert "notify" in skills_str
+
+    app = MagicMock()
+    app.client.discover_capabilities.return_value = fake_result
+
+    skills = discover_daemon_skills(app)
+
+    app.client.discover_capabilities.assert_called_once_with(node_id="veronicad", reasoner="*")
+    assert skills == ["subscribe", "exec", "notify"]
+
+
+def test_discover_daemon_skills_empty():
+    """discover_daemon_skills returns empty list when no capabilities found."""
+
+    @dataclass
+    class FakeResult:
+        json: None = None
+
+    app = MagicMock()
+    app.client.discover_capabilities.return_value = FakeResult()
+
+    skills = discover_daemon_skills(app)
+    assert skills == []
