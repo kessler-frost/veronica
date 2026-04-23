@@ -4,11 +4,11 @@
 
 ## Why Agentfield
 
-We migrated from NATS + MCP + OpenCode to [Agentfield](https://github.com/Agent-Field/agentfield) for two fundamental reasons:
+I migrated from NATS + MCP + OpenCode to [Agentfield](https://github.com/Agent-Field/agentfield) for two fundamental reasons:
 
-1. **Native Python AND Go SDK support.** We couldn't find another framework that had first-class SDKs for both languages. Our Go daemon (eBPF runtime) and Python behavior agents were stitched together with NATS message passing, FastMCP bridging, and OpenCode REST calls — three separate protocols just to connect two languages. Agentfield gives us one unified control plane with native SDKs on both sides.
+1. **Native Python AND Go SDK support.** I couldn't find another framework that had first-class SDKs for both languages. My Go daemon (eBPF runtime) and Python behavior agents were stitched together with NATS message passing, FastMCP bridging, and OpenCode REST calls — three separate protocols just to connect two languages. Agentfield gives me one unified control plane with native SDKs on both sides.
 
-2. **Bidirectional communication without MCP.** MCP is inherently unidirectional — the model calls tools, but tools can't push events back to the model. We need true bidirectional communication: the Go daemon pushes eBPF events TO agents, and agents call functions BACK on the daemon. MCP forced us to build a Rube Goldberg machine (NATS → EventWatcher → OpenCode → MCP → FastMCP → NATS) just to achieve what Agentfield does natively through its control plane.
+2. **Bidirectional communication without MCP.** MCP is inherently unidirectional — the model calls tools, but tools can't push events back to the model. I need true bidirectional communication: the Go daemon pushes eBPF events TO agents, and agents call functions BACK on the daemon. MCP forced me to build a Rube Goldberg machine (NATS → EventWatcher → OpenCode → MCP → FastMCP → NATS) just to achieve what Agentfield does natively through its control plane.
 
 **Zero MCP. Zero NATS. Zero OpenCode.** Just Agentfield + eBPF + LM Studio.
 

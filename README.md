@@ -6,11 +6,11 @@ This is an experiment to stress test what AI agents can actually do when given k
 
 ## Why Agentfield
 
-We switched to Agentfield because:
+I switched to Agentfield because:
 
-1. **Native Python AND Go SDK support.** We couldn't find another framework with first-class SDKs for both languages. Our Go daemon and Python behavior agents were previously stitched together with NATS, FastMCP, and OpenCode - three protocols to connect two languages. Agentfield replaces all of that with one control plane.
+1. **Native Python AND Go SDK support.** I couldn't find another framework with first-class SDKs for both languages. My Go daemon and Python behavior agents were previously stitched together with NATS, FastMCP, and OpenCode - three protocols to connect two languages. Agentfield replaces all of that with one control plane.
 
-2. **Bidirectional communication, no MCP.** MCP is unidirectional - models call tools, but tools can't push events back. We need the Go daemon to push eBPF events TO agents AND agents to call functions BACK on the daemon. Agentfield does this natively. No MCP, no NATS, no OpenCode. Just agents and functions talking through a control plane.
+2. **Bidirectional communication, no MCP.** MCP is unidirectional - models call tools, but tools can't push events back. I need the Go daemon to push eBPF events TO agents AND agents to call functions BACK on the daemon. Agentfield does this natively. No MCP, no NATS, no OpenCode. Just agents and functions talking through a control plane.
 
 ---
 
