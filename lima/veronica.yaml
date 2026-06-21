@@ -16,3 +16,25 @@ provision:
       apt-get install -y clang llvm libbpf-dev linux-tools-common \
         linux-tools-$(uname -r) linux-headers-$(uname -r) golang git make
       echo 'GOTOOLCHAIN=auto' >> /etc/environment
+
+  # eBPF-LSM boot parameter. Enforcement (the LSM primitives in
+  # internal/ebpf/programs/lsm) requires CONFIG_BPF_LSM=y AND "bpf" present in
+  # the active LSM list, which is controlled by the kernel `lsm=` cmdline. We
+  # append "bpf" to the distro default list and rebuild GRUB. A reboot is
+  # required for this to take effect; `veronica setup` / the precondition check
+  # report whether enforcement is live (scripts/vm/test_preconditions.sh).
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      DEFAULT_LSM="landlock,lockdown,yama,integrity,apparmor,bpf"
+      GRUB_FILE=/etc/default/grub
+      if ! grep -q 'lsm=.*bpf' "$GRUB_FILE"; then
+        # Strip any existing lsm= from the cmdline, then append ours.
+        sed -i -E 's/ ?lsm=[^" ]*//g' "$GRUB_FILE"
+        sed -i -E "s/^(GRUB_CMDLINE_LINUX=\")/\1lsm=${DEFAULT_LSM} /" "$GRUB_FILE"
+        update-grub || true
+        echo "lsm=${DEFAULT_LSM} configured in GRUB; reboot required for BPF-LSM enforcement"
+      fi
+      # Ensure securityfs is mounted so the active LSM list is readable.
+      mountpoint -q /sys/kernel/security || mount -t securityfs none /sys/kernel/security || true

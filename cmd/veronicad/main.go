@@ -47,6 +47,18 @@ func main() {
 	defer ebpfMgr.Close()
 	log.Printf("ebpf probes attached")
 
+	// Kernel preconditions: enforcement (eBPF-LSM) needs CONFIG_BPF_LSM=y and
+	// "bpf" in the active LSM list. Observation works regardless; if enforcement
+	// is unavailable we log a clear, actionable message and continue
+	// observation-only rather than failing startup.
+	ks := control.CheckKernelPreconditions()
+	if ks.EnforceReady {
+		log.Printf("kernel preconditions OK: eBPF-LSM enforcement available")
+	} else {
+		log.Printf("WARN: eBPF-LSM enforcement DISABLED: %s", ks.Reason)
+		log.Printf("      running observation-only; apply enforce policies after booting with lsm=...,bpf")
+	}
+
 	// Publisher: eBPF events → classify → push to subscribed behavior agents
 	tracker := vaf.NewPIDTracker()
 	cls := classifier.New()
