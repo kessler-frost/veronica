@@ -10,6 +10,13 @@
 
 #define VR_MAX_PREFIX 256
 
+// FMODE_WRITE is a kernel preprocessor macro (include/linux/fs.h), so it is not
+// carried in BTF/vmlinux.h and must be defined here. Its value (bit 1) has been
+// stable across kernel releases; f_mode is checked for write intent below.
+#ifndef FMODE_WRITE
+#define FMODE_WRITE 0x2
+#endif
+
 // vr_prefix: index 0 holds the NUL-terminated path prefix the daemon writes from
 // the policy's path_prefix param.
 struct {

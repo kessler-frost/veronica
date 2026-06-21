@@ -10,6 +10,13 @@
 
 #include "common_lsm.h"
 
+// AF_INET is a kernel preprocessor macro (include/uapi/linux/socket.h), so it is
+// not carried in BTF/vmlinux.h and must be defined here. Its value (2) is part of
+// the stable kernel/userspace ABI.
+#ifndef AF_INET
+#define AF_INET 2
+#endif
+
 // LPM trie key: prefixlen + 4-byte IPv4 (network byte order), matching
 // BPF_MAP_TYPE_LPM_TRIE's bpf_lpm_trie_key layout. The daemon writes one entry
 // per allowed CIDR (value is unused, set to 1).
