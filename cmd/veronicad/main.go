@@ -11,6 +11,7 @@ import (
 
 	vaf "github.com/fimbulwinter/veronica/internal/af"
 	"github.com/fimbulwinter/veronica/internal/classifier"
+	"github.com/fimbulwinter/veronica/internal/control"
 	vebpf "github.com/fimbulwinter/veronica/internal/ebpf"
 	"github.com/fimbulwinter/veronica/internal/event"
 )
@@ -55,6 +56,12 @@ func main() {
 	// Includes subscribe/unsubscribe so behavior agents can register for events
 	vaf.RegisterSkills(ag, tracker, ebpfMgr.Maps(), pub)
 
+	// Register the kernel control-plane functions (the 8 daemon↔warden contract
+	// functions: resolve_app, observe, list_primitives, apply_policy,
+	// set_policy_mode, list_policies, revert_policy, kill_switch).
+	ctrl := control.NewHandlers(control.NewProcSource())
+	registerControl(ag, ctrl)
+
 	go pub.Run(ctx, events)
 
 	go func() {
@@ -78,6 +85,43 @@ func main() {
 
 	log.Printf("shutting down...")
 	cancel()
+}
+
+// registerControl registers the eight kernel control-plane functions with
+// Agentfield, following the same RegisterReasoner pattern as RegisterSkills.
+func registerControl(ag *agent.Agent, c *control.Handlers) {
+	ag.RegisterReasoner("resolve_app", c.ResolveApp,
+		agent.WithDescription("Resolve an app name to its cgroup path and live PIDs"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("observe", c.Observe,
+		agent.WithDescription("Return a windowed Activity snapshot of an app's kernel activity"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("list_primitives", c.ListPrimitives,
+		agent.WithDescription("List the vetted eBPF-LSM enforcement primitives"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("apply_policy", c.ApplyPolicy,
+		agent.WithDescription("Apply a primitive to an app in audit mode (audit-first, guard-listed)"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("set_policy_mode", c.SetPolicyMode,
+		agent.WithDescription("Transition a policy between audit and enforce"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("list_policies", c.ListPolicies,
+		agent.WithDescription("List all current policies"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("revert_policy", c.RevertPolicy,
+		agent.WithDescription("Revert a single policy, detaching its enforcement"),
+		agent.WithReasonerTags("skill"),
+	)
+	ag.RegisterReasoner("kill_switch", c.KillSwitch,
+		agent.WithDescription("Revert every policy (fail-open kill switch)"),
+		agent.WithReasonerTags("skill"),
+	)
 }
 
 func envOr(key, fallback string) string {
