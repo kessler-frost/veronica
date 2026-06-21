@@ -12,6 +12,9 @@ int trace_file_open(struct pt_regs *ctx)
 {
     struct vr_file_open_event *e;
 
+    if (!vr_cgroup_observed())
+        return 0;
+
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
         return 0;

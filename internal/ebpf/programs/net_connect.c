@@ -13,6 +13,9 @@ int trace_connect(struct pt_regs *ctx)
     struct vr_net_connect_event *e;
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
 
+    if (!vr_cgroup_observed())
+        return 0;
+
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
         return 0;

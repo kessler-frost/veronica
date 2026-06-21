@@ -61,7 +61,8 @@ type ProcessExecProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type ProcessExecMapSpecs struct {
-	Events *ebpf.MapSpec `ebpf:"events"`
+	Events         *ebpf.MapSpec `ebpf:"events"`
+	VrTargetCgroup *ebpf.MapSpec `ebpf:"vr_target_cgroup"`
 }
 
 // ProcessExecVariableSpecs contains global variables before they are loaded into the kernel.
@@ -90,12 +91,14 @@ func (o *ProcessExecObjects) Close() error {
 //
 // It can be passed to LoadProcessExecObjects or ebpf.CollectionSpec.LoadAndAssign.
 type ProcessExecMaps struct {
-	Events *ebpf.Map `ebpf:"events"`
+	Events         *ebpf.Map `ebpf:"events"`
+	VrTargetCgroup *ebpf.Map `ebpf:"vr_target_cgroup"`
 }
 
 func (m *ProcessExecMaps) Close() error {
 	return _ProcessExecClose(
 		m.Events,
+		m.VrTargetCgroup,
 	)
 }
 

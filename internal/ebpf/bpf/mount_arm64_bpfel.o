@@ -1,0 +1,1 @@
+VERONICA_PLACEHOLDER_BPF_OBJECT regenerate with `go generate ./...` inside the Lima VM (clang -target bpf + vmlinux.h). Host cannot compile eBPF.

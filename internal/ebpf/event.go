@@ -8,6 +8,7 @@ const (
 	EventFileOpen    EventType = 2
 	EventNetConnect  EventType = 3
 	EventProcessExit EventType = 4
+	EventMount       EventType = 5
 )
 
 // EventHeader is the common header for all eBPF events.
@@ -70,6 +71,15 @@ type ProcessExitEvent struct {
 	Header   EventHeader
 	ExitCode int32
 	_        uint32 // padding
+}
+
+// MountEvent is emitted when a mount operation is attempted. Source carries the
+// mount device/source string and Target carries the filesystem type hint (see
+// programs/mount.c for why the type stands in for the target path).
+type MountEvent struct {
+	Header EventHeader
+	Source [256]byte
+	Target [256]byte
 }
 
 // CommString returns the command name as a trimmed string.

@@ -61,7 +61,8 @@ type NetConnectProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type NetConnectMapSpecs struct {
-	Events *ebpf.MapSpec `ebpf:"events"`
+	Events         *ebpf.MapSpec `ebpf:"events"`
+	VrTargetCgroup *ebpf.MapSpec `ebpf:"vr_target_cgroup"`
 }
 
 // NetConnectVariableSpecs contains global variables before they are loaded into the kernel.
@@ -90,12 +91,14 @@ func (o *NetConnectObjects) Close() error {
 //
 // It can be passed to LoadNetConnectObjects or ebpf.CollectionSpec.LoadAndAssign.
 type NetConnectMaps struct {
-	Events *ebpf.Map `ebpf:"events"`
+	Events         *ebpf.Map `ebpf:"events"`
+	VrTargetCgroup *ebpf.Map `ebpf:"vr_target_cgroup"`
 }
 
 func (m *NetConnectMaps) Close() error {
 	return _NetConnectClose(
 		m.Events,
+		m.VrTargetCgroup,
 	)
 }
 

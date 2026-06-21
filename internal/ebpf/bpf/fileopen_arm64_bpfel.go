@@ -61,7 +61,8 @@ type FileOpenProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type FileOpenMapSpecs struct {
-	Events *ebpf.MapSpec `ebpf:"events"`
+	Events         *ebpf.MapSpec `ebpf:"events"`
+	VrTargetCgroup *ebpf.MapSpec `ebpf:"vr_target_cgroup"`
 }
 
 // FileOpenVariableSpecs contains global variables before they are loaded into the kernel.
@@ -90,12 +91,14 @@ func (o *FileOpenObjects) Close() error {
 //
 // It can be passed to LoadFileOpenObjects or ebpf.CollectionSpec.LoadAndAssign.
 type FileOpenMaps struct {
-	Events *ebpf.Map `ebpf:"events"`
+	Events         *ebpf.Map `ebpf:"events"`
+	VrTargetCgroup *ebpf.Map `ebpf:"vr_target_cgroup"`
 }
 
 func (m *FileOpenMaps) Close() error {
 	return _FileOpenClose(
 		m.Events,
+		m.VrTargetCgroup,
 	)
 }
 

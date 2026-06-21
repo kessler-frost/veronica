@@ -48,6 +48,7 @@ func (m *Manager) LoadAndAttach() error {
 	}
 
 	m.maps.Register("process_exec_events", procObjs.Events)
+	m.maps.Register("process_exec_target_cgroup", procObjs.VrTargetCgroup)
 
 	procLink, err := link.Tracepoint("sched", "sched_process_exec", procObjs.TraceExec, nil)
 	if err != nil {
@@ -67,6 +68,7 @@ func (m *Manager) LoadAndAttach() error {
 		log.Printf("WARN: load file_open: %v", err)
 	} else {
 		m.maps.Register("file_open_events", fileObjs.Events)
+		m.maps.Register("file_open_target_cgroup", fileObjs.VrTargetCgroup)
 		fileLink, err := link.Kprobe("do_sys_openat2", fileObjs.TraceFileOpen, nil)
 		if err != nil {
 			log.Printf("WARN: attach file_open: %v", err)
@@ -84,6 +86,7 @@ func (m *Manager) LoadAndAttach() error {
 		log.Printf("WARN: load net_connect: %v", err)
 	} else {
 		m.maps.Register("net_connect_events", netObjs.Events)
+		m.maps.Register("net_connect_target_cgroup", netObjs.VrTargetCgroup)
 		netLink, err := link.Kprobe("tcp_v4_connect", netObjs.TraceConnect, nil)
 		if err != nil {
 			log.Printf("WARN: attach net_connect: %v", err)
@@ -112,7 +115,67 @@ func (m *Manager) LoadAndAttach() error {
 		}
 	}
 
+	// Mount kprobe (non-fatal if unavailable) — observation of mount(2) for the
+	// target cgroup. path_mount is the kernel 5.9+ common mount entry.
+	mountObjs := bpf.MountObjects{}
+	if err := bpf.LoadMountObjects(&mountObjs, nil); err != nil {
+		log.Printf("WARN: load mount: %v", err)
+	} else {
+		m.maps.Register("mount_events", mountObjs.Events)
+		m.maps.Register("mount_target_cgroup", mountObjs.VrTargetCgroup)
+		mountLink, err := link.Kprobe("path_mount", mountObjs.TraceMount, nil)
+		if err != nil {
+			log.Printf("WARN: attach mount: %v", err)
+		} else {
+			m.links = append(m.links, mountLink)
+			if mountReader, err := ringbuf.NewReader(mountObjs.Events); err == nil {
+				m.readers = append(m.readers, mountReader)
+			}
+		}
+	}
+
+	// Seed every observation program's target-cgroup map with the "observe-all"
+	// sentinel (key 0) so the probes emit events before a target is selected.
+	m.ObserveAll()
+
 	return nil
+}
+
+// targetCgroupMaps lists the per-program target-cgroup map names. Each
+// observation program (process_exec, file_open, net_connect, mount) owns its
+// own vr_target_cgroup map instance, so a cgroup filter change must fan out to
+// all of them. Maps that failed to load are silently skipped by MapManager.
+var targetCgroupMaps = []string{
+	"process_exec_target_cgroup",
+	"file_open_target_cgroup",
+	"net_connect_target_cgroup",
+	"mount_target_cgroup",
+}
+
+// observeAllSentinel is key 0 in the target-cgroup map: while present the probes
+// emit for every cgroup. SetObservedCgroup deletes it to switch to cgroup-scoped
+// observation; ObserveAll restores it.
+const observeAllSentinel uint64 = 0
+
+// SetObservedCgroup scopes all observation probes to a single cgroup v2 id:
+// events are emitted only for tasks in that cgroup. It removes the observe-all
+// sentinel and installs the cgroup id across every program's target map. Used by
+// the daemon when the warden runs `observe <app>` / `watch <app>`.
+func (m *Manager) SetObservedCgroup(cgroupID uint64) {
+	one := uint8(1)
+	for _, name := range targetCgroupMaps {
+		_ = m.maps.Put(name, cgroupID, one)
+		_ = m.maps.Delete(name, observeAllSentinel)
+	}
+}
+
+// ObserveAll resets every observation probe to emit for all cgroups by
+// reinstating the observe-all sentinel.
+func (m *Manager) ObserveAll() {
+	one := uint8(1)
+	for _, name := range targetCgroupMaps {
+		_ = m.maps.Put(name, observeAllSentinel, one)
+	}
 }
 
 // ReadEvents reads events from all ring buffers concurrently.
@@ -223,6 +286,23 @@ func (m *Manager) parseEvent(data []byte) *event.Event {
 		return &event.Event{
 			Type:     "net_connect",
 			Resource: fmt.Sprintf("ip:%s:%d", ip, e.DPort),
+			Data:     string(payload),
+		}
+
+	case EventMount:
+		var e MountEvent
+		if err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &e); err != nil {
+			return nil
+		}
+		source := FilenameString(e.Source)
+		target := FilenameString(e.Target)
+		payload, _ := json.Marshal(map[string]any{
+			"comm": e.Header.CommString(), "pid": e.Header.PID,
+			"source": source, "target": target,
+		})
+		return &event.Event{
+			Type:     "mount",
+			Resource: fmt.Sprintf("mount:%s", source),
 			Data:     string(payload),
 		}
 	}
