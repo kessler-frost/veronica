@@ -35,7 +35,7 @@ var catalog = map[string]Primitive{
 	},
 	"block-mount": {
 		ID:     "block-mount",
-		Desc:   "Deny mount operations (e.g. docker volume create)",
+		Desc:   "Deny mount operations (sb_mount/move_mount); for blocking docker volume creation use block-path-write, since a local volume is a mkdir, not a mount",
 		Params: objectSchema(map[string]any{"path_prefix": stringSchema()}),
 		Hooks:  []string{"sb_mount", "move_mount"},
 	},

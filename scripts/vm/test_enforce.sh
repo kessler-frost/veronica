@@ -7,14 +7,20 @@
 # BPF backend, there is no vmlinux.h, and LSM programs cannot be loaded or
 # attached off Linux. Do not fake a host run.
 #
-# The acceptance scenario (the demo from the plan), proven at the kernel level:
-#   1. Resolve docker's cgroup; load block-mount scoped to it (audit-first).
+# The acceptance scenario (the demo from the plan), proven at the kernel level.
+# NOTE: a docker `local` volume is created by mkdir of
+# /var/lib/docker/volumes/<name> (verified: it emits security_path_mkdir, NOT a
+# mount syscall), so the primitive that actually governs "don't let docker create
+# volumes" is block-path-write hooking path_mkdir — block-mount (sb_mount) never
+# fires for it. The demo therefore loads block-path-write{path_prefix:"volumes"}.
+#   1. Resolve docker's cgroup; load block-path-write scoped to it (audit-first).
 #   2. In AUDIT mode, `docker volume create` SUCCEEDS and the audit counter rises
 #      (would-block observed).
-#   3. Flip to ENFORCE; `docker volume create` now FAILS with EPERM.
-#   4. An unrelated docker op (`docker ps`) still works — enforcement is
-#      mount-scoped, not a blanket docker block.
-#   5. The kill switch (Revert/KillSwitch) removes the policy; mounts work again.
+#   3. Flip to ENFORCE; `docker volume create` now FAILS with EPERM
+#      (kernel: "mkdir .../volumes/<name>: operation not permitted").
+#   4. An unrelated docker op (`docker ps`) still works — enforcement is scoped to
+#      volume-dir creation, not a blanket docker block.
+#   5. The kill switch (Revert/KillSwitch) removes the policy; create works again.
 #
 # The `veronica watch docker` / `veronica enforce "don't let docker create
 # volumes"` / `veronica panic` CLI verbs drive this same internal/ebpf.LSMManager
@@ -100,8 +106,12 @@ func main() {
 	cgroup := os.Args[1]
 	mgr := vebpf.NewLSMManager()
 
-	// Apply block-mount scoped to docker, audit-first.
-	if err := mgr.Apply("pol-1", "block-mount", cgroup, map[string]any{}); err != nil {
+	// Apply block-path-write scoped to docker, audit-first. `docker volume
+	// create` is a mkdir of /var/lib/docker/volumes/<name> (verified: it emits
+	// security_path_mkdir, not a mount syscall), so the primitive that governs
+	// it is block-path-write hooking path_mkdir. path_prefix "volumes" matches
+	// the parent dir (".../docker/volumes") of the new volume directory.
+	if err := mgr.Apply("pol-1", "block-path-write", cgroup, map[string]any{"path_prefix": "volumes"}); err != nil {
 		fmt.Fprintln(os.Stderr, "apply:", err)
 		os.Exit(2)
 	}
@@ -128,14 +138,15 @@ func main() {
 		fmt.Println("ENFORCE_CREATE_DENIED")
 	}
 
-	// Unrelated docker op still works under the mount policy.
+	// Unrelated docker op still works under the path-write policy (the policy is
+	// scoped to volume-dir creation, not a blanket docker block).
 	if out, err := exec.Command("docker", "ps").CombinedOutput(); err != nil {
 		fmt.Fprintln(os.Stderr, "docker ps failed under enforce:", err, string(out))
 		os.Exit(5)
 	}
 	fmt.Println("DOCKER_PS_OK")
 
-	// Kill switch: revert; mounts work again.
+	// Kill switch: revert; volume create works again.
 	mgr.KillSwitch()
 	if err := dockerVolumeCreate("vrtestvol"); err != nil {
 		fmt.Fprintln(os.Stderr, "post-panic volume create failed:", err)
@@ -156,4 +167,4 @@ for want in AUDIT_CREATE_OK ENFORCE_CREATE_DENIED DOCKER_PS_OK PANIC_REVERTED_OK
   grep -q "^$want" <<<"$OUT" || { echo "FAIL: missing acceptance step: $want" >&2; exit 1; }
 done
 
-echo "PASS: block-mount audit->enforce->panic verified against docker volume create"
+echo "PASS: block-path-write audit->enforce->panic verified against docker volume create"

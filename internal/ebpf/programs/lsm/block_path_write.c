@@ -86,22 +86,34 @@ int BPF_PROG(vr_block_path_write_create, struct inode *dir,
     VR_DECIDE("path-write inode_create");
 }
 
-// path_mkdir: deny mkdir under the prefix.
+// path_mkdir: deny creating a directory whose name, OR whose parent directory's
+// name, matches the configured prefix. The parent-directory match is what makes
+// "block writes under <dir>" work for mkdir: e.g. with path_prefix "volumes",
+// dockerd's `mkdir /var/lib/docker/volumes/<name>` is denied because the parent
+// dir (`dir` arg) is named "volumes". Matching the new dir's own name as well
+// keeps the single-segment-prefix case (mkdir of a dir literally named the
+// prefix) working. This is the kernel side of "don't let docker create volumes",
+// verified against `docker volume create` (which performs exactly this mkdir).
 SEC("lsm/path_mkdir")
 int BPF_PROG(vr_block_path_write_mkdir, const struct path *dir,
              struct dentry *dentry, umode_t mode)
 {
     char name[VR_MAX_PREFIX];
-    int len = (int)BPF_CORE_READ(dentry, d_name.len);
-    if (len <= 0 || len >= VR_MAX_PREFIX)
-        return 0;
 
+    // 1. The new directory's own basename.
     bpf_probe_read_kernel_str(name, sizeof(name),
                               BPF_CORE_READ(dentry, d_name.name));
-    if (!vr_path_has_prefix(name))
-        return 0;
+    if (vr_path_has_prefix(name))
+        VR_DECIDE("path-write path_mkdir (name)");
 
-    VR_DECIDE("path-write path_mkdir");
+    // 2. The parent directory's basename (dir->dentry->d_name.name).
+    struct dentry *parent = BPF_CORE_READ(dir, dentry);
+    bpf_probe_read_kernel_str(name, sizeof(name),
+                              BPF_CORE_READ(parent, d_name.name));
+    if (vr_path_has_prefix(name))
+        VR_DECIDE("path-write path_mkdir (parent)");
+
+    return 0;
 }
 
 char LICENSE[] SEC("license") = "GPL";
