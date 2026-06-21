@@ -39,6 +39,14 @@ I migrated from NATS + MCP + OpenCode to [Agentfield](https://github.com/Agent-F
 - `uv run veronica logs` — Stream daemon logs (journalctl)
 - `uv run veronica run <cmd>` — Run arbitrary command in VM
 
+### Kernel Control Plane (v1) — observe + control an app via eBPF
+Point veronica at an app in the VM, see what it's doing, enforce NL policy via vetted eBPF-LSM primitives (audit-first). Design: `docs/superpowers/specs/2026-06-21-kernel-control-plane-design.md`; plan: `docs/superpowers/plans/2026-06-21-kernel-control-plane-v1.md`.
+- `uv run veronica watch <app>` — target an app (resolve cgroup/PIDs)
+- `uv run veronica ask "<q>"` — what is the app doing (kernel-sourced, LLM-summarized)
+- `uv run veronica enforce "<policy>"` — NL → vetted LSM primitive, loaded in AUDIT first; then `confirm` to enforce
+- `uv run veronica policies | audit <id> | revert <id> | panic` — list | show would-blocks | remove one | kill-switch all
+- Code: daemon `internal/control/` (catalog, lifecycle, handlers — host-tested) + `internal/ebpf/programs/lsm/` (VM-gated); warden `src/veronica/control/` (NL→primitive, schema-validated). 8 Agentfield fns: resolve_app, observe, list_primitives, apply_policy, set_policy_mode, list_policies, revert_policy, kill_switch.
+
 ## Lima VM
 - Config: `lima/veronica.yaml` (base: Ubuntu `template:default`)
 - Files copied into VM via `limactl cp` (no host mounts)

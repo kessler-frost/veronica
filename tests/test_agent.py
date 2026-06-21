@@ -1,7 +1,6 @@
 """tests/test_agent.py — Tests for agent discovery and EVENT_SCHEMA."""
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 from veronica.agent import EVENT_SCHEMA, discover_daemon_skills
