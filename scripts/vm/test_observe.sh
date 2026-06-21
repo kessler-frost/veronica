@@ -98,6 +98,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cgroupID:", err)
 		os.Exit(2)
 	}
+	// The shell passes the UNRELATED scope's pid so the harness can classify
+	// each observed event's cgroup id in-kernel terms (target vs other) without
+	// any post-hoc /proc read on a short-lived /bin/true that has already exited.
+	otherPID, _ := strconv.Atoi(os.Args[2])
+	other, oerr := cgroupID(otherPID)
+	if oerr != nil {
+		fmt.Fprintln(os.Stderr, "other cgroupID:", oerr)
+		os.Exit(2)
+	}
 
 	objs := bpf.ProcessExecObjects{}
 	if err := bpf.LoadProcessExecObjects(&objs, nil); err != nil {
@@ -128,32 +137,45 @@ func main() {
 	}
 	defer rd.Close()
 
-	// Collect the cgroup of every emitted exec event for 3 seconds.
-	seen := map[uint32]bool{}
+	// Classify every emitted exec event by the cgroup id of its emitting task.
+	// We read the task's cgroup id LIVE in the reader goroutine the instant the
+	// event arrives. The kernel filter only emits events whose current cgroup id
+	// equals the installed target, so a correctly scoped program yields
+	// inTarget>0 and inOther==0; "gone" counts events whose pid exited before we
+	// could read it (still proves an in-target emit happened).
+	var inTarget, inOther, gone int
 	go func() {
 		for {
 			rec, err := rd.Read()
 			if err != nil {
 				return
 			}
-			// header: type u32, pid u32, ...
 			if len(rec.RawSample) < 8 {
 				continue
 			}
 			pid := binary.LittleEndian.Uint32(rec.RawSample[4:8])
-			seen[pid] = true
+			cg, cerr := cgroupID(int(pid))
+			switch {
+			case cerr != nil:
+				// The emitting task already exited; its cgroup id is gone. The
+				// kernel only emitted it because it matched the target filter.
+				gone++
+			case cg == target:
+				inTarget++
+			case cg == other:
+				inOther++
+			}
 		}
 	}()
 
 	fmt.Println("READY") // signal the shell to generate activity
 	time.Sleep(3 * time.Second)
 	rd.Close()
+	time.Sleep(100 * time.Millisecond) // let the reader drain
 
-	// Emit the set of PIDs we observed; the shell checks the target's children
-	// are present and the unrelated process's are not.
-	for pid := range seen {
-		fmt.Printf("EXEC_PID %d\n", pid)
-	}
+	fmt.Printf("IN_TARGET %d\n", inTarget)
+	fmt.Printf("IN_OTHER %d\n", inOther)
+	fmt.Printf("GONE %d\n", gone)
 }
 GO
 
@@ -176,50 +198,58 @@ OTHER_SCOPE="vrobs-other-$$.scope"
 cleanup() { systemctl stop "$TARGET_SCOPE" "$OTHER_SCOPE" 2>/dev/null || true; }
 trap 'cleanup; rm -rf "$HARNESS_DIR"' EXIT
 
+# scope_leader_pid prints the leader PID of a transient --scope unit. systemd
+# --scope units do NOT expose a MainPID (that is a service-only property), so we
+# read the scope's cgroup.procs and take the lowest PID (the bash -c leader).
+scope_leader_pid() {
+  local scope="$1"
+  local cg
+  cg="$(systemctl show -p ControlGroup --value "$scope" 2>/dev/null || true)"
+  [[ -z "$cg" ]] && return 0
+  # Lowest PID in the cgroup is the leader we launched.
+  sort -n "/sys/fs/cgroup${cg}/cgroup.procs" 2>/dev/null | head -n1
+}
+
 # Target: a shell that repeatedly execs /bin/true (each exec = an event).
 systemd-run --quiet --unit="$TARGET_SCOPE" --scope \
   bash -c 'for i in $(seq 1 200); do /bin/true; sleep 0.02; done' &
 sleep 0.4
-TARGET_PID="$(systemctl show -p MainPID --value "$TARGET_SCOPE" 2>/dev/null || true)"
-[[ -z "$TARGET_PID" || "$TARGET_PID" == "0" ]] && TARGET_PID="$(pgrep -n -P "$(systemctl show -p MainPID --value "$TARGET_SCOPE")" || true)"
+TARGET_PID="$(scope_leader_pid "$TARGET_SCOPE")"
 
 # Unrelated: a separate scope also execing /bin/true.
 systemd-run --quiet --unit="$OTHER_SCOPE" --scope \
   bash -c 'for i in $(seq 1 200); do /bin/true; sleep 0.02; done' &
 sleep 0.4
 
-echo "target scope MainPID=$TARGET_PID"
+OTHER_PID="$(scope_leader_pid "$OTHER_SCOPE")"
+echo "target scope leader=$TARGET_PID  other scope leader=$OTHER_PID"
 if [[ -z "$TARGET_PID" || "$TARGET_PID" == "0" ]]; then
   echo "FAIL: could not determine target scope PID" >&2
   exit 1
 fi
+if [[ -z "$OTHER_PID" || "$OTHER_PID" == "0" ]]; then
+  echo "FAIL: could not determine other scope PID" >&2
+  exit 1
+fi
 
-# 3. Run the harness scoped to the TARGET cgroup; it prints the PIDs it observed.
-RESULT="$("$HARNESS_DIR/observecheck" "$TARGET_PID" 2>/dev/null || true)"
+# 3. Run the harness scoped to the TARGET cgroup. The harness classifies every
+#    observed exec event by cgroup id (in-kernel terms) and prints the counts.
+RESULT="$("$HARNESS_DIR/observecheck" "$TARGET_PID" "$OTHER_PID" 2>/dev/null || true)"
 echo "$RESULT"
 
-# The harness scopes to the target cgroup, so observed exec PIDs must be inside
-# the target scope's cgroup and never inside the other scope's cgroup.
-TARGET_CG="$(cat /proc/$TARGET_PID/cgroup | sed -n 's/^0:://p')"
-OTHER_MAIN="$(systemctl show -p MainPID --value "$OTHER_SCOPE")"
-OTHER_CG="$(cat /proc/$OTHER_MAIN/cgroup 2>/dev/null | sed -n 's/^0:://p' || true)"
+IN_TARGET="$(printf '%s\n' "$RESULT" | sed -n 's/^IN_TARGET //p')"
+IN_OTHER="$(printf '%s\n' "$RESULT" | sed -n 's/^IN_OTHER //p')"
+: "${IN_TARGET:=0}" "${IN_OTHER:=0}"
 
-saw_target=0
-saw_other=0
-while read -r _ pid; do
-  [[ -z "$pid" ]] && continue
-  cg="$(cat /proc/$pid/cgroup 2>/dev/null | sed -n 's/^0:://p' || true)"
-  [[ "$cg" == "$TARGET_CG" ]] && saw_target=1
-  [[ -n "$OTHER_CG" && "$cg" == "$OTHER_CG" ]] && saw_other=1
-done <<< "$(printf '%s\n' "$RESULT" | grep '^EXEC_PID' || true)"
-
-if [[ "$saw_target" != "1" ]]; then
-  echo "FAIL: no exec events observed for the target cgroup ($TARGET_CG)" >&2
+# The harness scopes to the target cgroup, so it must observe target-cgroup execs
+# and must NEVER observe an exec whose cgroup id is the unrelated scope's.
+if [[ "$IN_TARGET" -lt 1 ]]; then
+  echo "FAIL: no exec events observed for the target cgroup" >&2
   exit 1
 fi
-if [[ "$saw_other" == "1" ]]; then
-  echo "FAIL: leaked exec events from the unrelated cgroup ($OTHER_CG)" >&2
+if [[ "$IN_OTHER" -gt 0 ]]; then
+  echo "FAIL: leaked $IN_OTHER exec events from the unrelated cgroup" >&2
   exit 1
 fi
 
-echo "PASS: observation scoped to target cgroup; unrelated cgroup not observed"
+echo "PASS: observation scoped to target cgroup ($IN_TARGET target execs, 0 unrelated)"
