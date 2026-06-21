@@ -67,9 +67,22 @@ I migrated from NATS + MCP + OpenCode to [Agentfield](https://github.com/Agent-F
 - Daemon binary: `veronicad`, package `./cmd/veronicad/`, installs to `/usr/local/bin/veronicad`
 - Build via CLI: `uv run veronica build` (syncs source + builds in VM)
 - Full setup: `uv run veronica setup` (first time — includes eBPF compile + Go generate)
-- Go tests (macOS): `go test ./internal/classifier/ ./internal/agent/ -v`
-- Python tests: `uv run pytest`
-- eBPF tests: must run in VM
+
+### Host-runnable (macOS, no VM/kernel needed — use for CI)
+All host-side logic builds and tests on darwin/arm64. cilium/ebpf compiles
+cross-platform; only *loading* eBPF programs at runtime needs the Linux kernel,
+so the pure-Go decode/classify/builder logic is fully unit-testable on the host.
+```
+go vet ./...
+go build ./...
+go test ./... -race          # internal/{af,classifier,ebpf,event}
+uv sync && uv run pytest -v  # tests/{test_agent,test_config}.py
+```
+
+### VM/kernel-gated (run inside the Lima Ubuntu VM only)
+- Loading eBPF programs, attaching tracepoints/kprobes, ring-buffer reads
+- Live `parseEvent` against real kernel events, the full daemon, Agentfield/LM Studio
+- `eBPF tests: must run in VM`
 
 ## LM Studio (Runtime LLM)
 - Model: `mlx-qwen3.5-35b-a3b-claude-4.6-opus-reasoning-distilled`
