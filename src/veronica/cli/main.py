@@ -14,6 +14,7 @@ from pathlib import Path
 import typer
 
 from veronica.config import VeronicaConfig
+from veronica.control.warden import Warden
 
 app = typer.Typer(help="Control the Veronica eBPF intelligence layer.")
 vm_app = typer.Typer(help="Manage the Lima VM lifecycle.")
@@ -211,7 +212,7 @@ def status():
             comms = config.get("comm_filter", [])
             typer.echo(f"           events={subs} comm_filter={comms}")
         else:
-            typer.echo(f"           (will self-configure on first boot)")
+            typer.echo("           (will self-configure on first boot)")
 
 
 @app.command()
@@ -333,7 +334,7 @@ def list_behaviors():
             comms = config.get("comm_filter", [])
             typer.echo(f"           events={subs} comm_filter={comms}")
         else:
-            typer.echo(f"           (will self-configure on first boot)")
+            typer.echo("           (will self-configure on first boot)")
 
 
 @app.command()
@@ -357,3 +358,88 @@ def rm(description: str = typer.Argument(help="Behavior text or UUID prefix to r
         typer.echo(f"Removed [{agent_id}]: {desc}")
 
     _save_behaviors(data)
+
+
+# --- Control-plane commands (kernel control plane v1) ---
+
+def _make_warden() -> Warden:
+    """Build the production Warden: Agentfield-backed daemon client + LM Studio.
+
+    Tests monkeypatch this to inject a FakeDaemonClient + mock LLM.
+    """
+    from veronica.control.agentfield_client import AgentfieldDaemonClient
+    from veronica.control.llm import LMStudioLLM
+
+    client = AgentfieldDaemonClient(cfg.agentfield_url)
+    llm = LMStudioLLM(cfg.llm_url, cfg.llm_model, cfg.llm_api_key)
+    return Warden(client, llm)
+
+
+@app.command()
+def watch(app_name: str = typer.Argument(help="App to watch, e.g. docker")):
+    """Summarize what an app is doing from recent kernel activity."""
+    summary = _make_warden().ask(app_name, f"What is {app_name} doing?")
+    typer.echo(summary)
+
+
+@app.command()
+def ask(
+    app_name: str = typer.Argument(help="App to ask about"),
+    question: str = typer.Argument(help="Natural-language question"),
+):
+    """Ask a natural-language question about an app's activity."""
+    typer.echo(_make_warden().ask(app_name, question))
+
+
+@app.command()
+def enforce(policy: str = typer.Argument(help="Natural-language policy")):
+    """Translate a policy to a primitive and load it in audit mode."""
+    report = _make_warden().enforce(policy)
+    typer.echo(f"Policy {report.policy_id}: {report.primitive_id} {report.params}")
+    typer.echo(f"Mode: audit — would-block events so far: {report.would_block}")
+    typer.echo(report.confirm_hint)
+
+
+@app.command()
+def policies():
+    """List active policies and their modes."""
+    pols = _make_warden().client.list_policies()
+    if not pols:
+        typer.echo("No policies.")
+        return
+    for p in pols:
+        typer.echo(f"  {p.id}  {p.primitive_id}  [{p.mode}]  would-block={p.audit_count}  {p.params}")
+
+
+@app.command()
+def audit(
+    policy_id: str = typer.Argument(help="Policy id"),
+    confirm: bool = typer.Option(False, "--confirm", help="Flip audit -> enforce"),
+):
+    """Show an audited policy, or --confirm to flip it to enforce."""
+    warden = _make_warden()
+    if confirm:
+        pol = warden.confirm(policy_id)
+        typer.echo(f"Policy {pol.id} now in enforce mode.")
+        return
+    matches = [p for p in warden.client.list_policies() if p.id == policy_id]
+    if not matches:
+        typer.echo(f"No policy {policy_id}", err=True)
+        raise typer.Exit(1)
+    p = matches[0]
+    typer.echo(f"Policy {p.id}: {p.primitive_id} [{p.mode}] would-block={p.audit_count}")
+    typer.echo("Re-run with --confirm to enforce.")
+
+
+@app.command()
+def revert(policy_id: str = typer.Argument(help="Policy id to revert")):
+    """Detach a single policy."""
+    _make_warden().client.revert_policy(policy_id)
+    typer.echo(f"Reverted {policy_id}.")
+
+
+@app.command()
+def panic():
+    """Kill switch: detach every policy immediately."""
+    n = _make_warden().panic()
+    typer.echo(f"Panic: reverted {n} policy(ies). All enforcement detached.")
