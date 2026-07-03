@@ -1,0 +1,110 @@
+# cua-parity SUITE v1 — the frozen chase set
+#
+# 10 concrete tasks that cua can do today and Veronica CANNOT (no goal-driven
+# executor + no rung-2 adapters yet). All are bucket=headless (🟡): they have a
+# structured/CLI equivalent, so Veronica can reach them WITHOUT screenshots once
+# built. This file is FROZEN — we measure cua once, then iterate Veronica until it
+# beats every row. Add tasks in a suite-v2; don't mutate v1's definitions.
+#
+# Each task ships with a deterministic oracle so "success" means the same thing
+# for both agents. Running the suite writes results/<agent>-<date>.json and
+# updates SCOREBOARD.md.
+
+meta:
+  suite: v1
+  frozen: true
+  bucket: headless          # all rows; the fair chase set (not 🟢 we already do, not 🔴 we structurally can't)
+  cua_baseline_status: not-yet-measured   # requires a one-time run on a real host (macOS/Linux + VM + vision LLM)
+  published_anchor:
+    osworld_verified_sota: "~85% (Anthropic Claude agents), Opus 4.8 ~83.4%"
+    human_baseline: "72.36%"
+    efficiency: "OSWorld-Human: 1.4-2.7x excess steps; 75-94% of latency in vision/LLM calls; >=1 screenshot/step"
+  win_condition: "Veronica matches cua success on each row at 0 screenshots and lower wall-clock."
+
+tasks:
+  - id: v1.web.form_submit
+    domain: web / Chrome
+    instruction: "Open the given local test page, fill name/email/message, submit the form."
+    oracle: "test server records a POST with the exact field values"
+    cua_approach: "screenshot -> click fields -> type -> click submit (multi-step, vision-grounded)"
+    veronica_target: "rung-2 Playwright/CDP headless, or POST the endpoint directly"
+    needs: [goal-driven-mode, adapter:playwright]
+
+  - id: v1.web.scrape_table
+    domain: web / Chrome
+    instruction: "From the given page, extract the products table to CSV (name,price,stock)."
+    oracle: "output CSV byte-matches expected.csv (sorted)"
+    cua_approach: "screenshot -> read rendered table -> transcribe (error-prone at scale)"
+    veronica_target: "HTTP GET + parse DOM, or Playwright for JS-rendered"
+    needs: [goal-driven-mode, adapter:playwright]
+
+  - id: v1.calc.find_replace
+    domain: office / LibreOffice Calc
+    instruction: "In sheet.ods, replace every 'Pending' in column C with 'Closed', save."
+    oracle: "no cell in C equals 'Pending'; count of 'Closed' matches pre-count of 'Pending'"
+    cua_approach: "screenshot -> Ctrl+H dialog -> type -> replace-all -> save"
+    veronica_target: "openpyxl/ezodf rewrite, or soffice --headless macro"
+    needs: [goal-driven-mode, adapter:libreoffice-headless]
+
+  - id: v1.calc.formula_column
+    domain: office / LibreOffice Calc
+    instruction: "In orders.ods add column D = B*C, then put the sum of D in E1."
+    oracle: "D[i]==B[i]*C[i] for all rows; E1==sum(D)"
+    cua_approach: "screenshot -> click cells -> type formulas -> fill down"
+    veronica_target: "openpyxl compute + write"
+    needs: [goal-driven-mode, adapter:xlsx-ods]
+
+  - id: v1.writer.docx_to_pdf
+    domain: office / LibreOffice Writer
+    instruction: "Set the title of report.docx to 'Q3 Summary', export the doc to report.pdf."
+    oracle: "report.pdf exists; extracted text contains 'Q3 Summary'"
+    cua_approach: "screenshot -> edit -> File>Export as PDF dialog"
+    veronica_target: "edit via python-docx + soffice --headless --convert-to pdf"
+    needs: [goal-driven-mode, adapter:libreoffice-headless]
+
+  - id: v1.image.crop_convert
+    domain: image / GIMP
+    instruction: "Crop input.png to the center 512x512 and save as output.jpg quality 85."
+    oracle: "output.jpg is JPEG, 512x512, within quality tolerance"
+    cua_approach: "screenshot -> GIMP tools -> crop -> export dialog (many steps)"
+    veronica_target: "ImageMagick convert via exec"
+    needs: [goal-driven-mode, adapter:imagemagick]
+
+  - id: v1.image.batch_watermark
+    domain: image / GIMP
+    instruction: "Resize every *.png in ./photos to max width 1024 and add watermark.png bottom-right."
+    oracle: "each output <=1024 wide and differs from source in the watermark region"
+    cua_approach: "repeat GUI edit per image (does not scale)"
+    veronica_target: "ImageMagick mogrify/composite loop"
+    needs: [goal-driven-mode, adapter:imagemagick]
+
+  - id: v1.media.transcode
+    domain: media / video player
+    instruction: "Convert clip.mp4 to clip.webm (VP9) and extract clip.mp3 (audio only)."
+    oracle: "clip.webm is VP9; clip.mp3 is MP3; durations match source +/-0.5s"
+    cua_approach: "GUI converter app, format menus"
+    veronica_target: "ffmpeg via exec"
+    needs: [goal-driven-mode, adapter:ffmpeg]
+
+  - id: v1.db.query_export
+    domain: data / DB GUI
+    instruction: "In store.db, export customers with >5 orders to top_customers.csv (id,name,orders)."
+    oracle: "CSV rows byte-match the SQL result set (sorted)"
+    cua_approach: "open DB GUI -> type query -> run -> export dialog"
+    veronica_target: "sqlite3 exec + redirect"
+    needs: [goal-driven-mode, adapter:sqlite]
+
+  - id: v1.pdf.merge_extract
+    domain: docs / PDF viewer
+    instruction: "Merge a.pdf and b.pdf into merged.pdf, then write pages 2-3 to excerpt.pdf."
+    oracle: "merged.pdf pagecount==a+b; excerpt.pdf pagecount==2"
+    cua_approach: "GUI PDF tool, drag/reorder, export"
+    veronica_target: "qpdf/pdfunite via exec"
+    needs: [goal-driven-mode, adapter:pdf]
+
+# Notes:
+# - cua_success is expected ~1.0 for these (in-distribution, not the OSWorld hard
+#   tail) but MUST be confirmed by the one-time run, not assumed. See SCOREBOARD.md.
+# - The number Veronica actually beats is efficiency: cua takes N screenshots and
+#   S seconds; Veronica must hit the same oracle at 0 screenshots and < S.
+</content>
