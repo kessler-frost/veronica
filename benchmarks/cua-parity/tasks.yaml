@@ -1,0 +1,271 @@
+# cua-parity task catalog
+#
+# The set of things cua (a screenshot-driven computer-use agent) can do, each
+# classified by how Veronica would approach it. This is the iterable source of
+# truth: add tasks, flip `veronica_status` as we implement, fill metrics from
+# runs (results/ holds the measured numbers).
+#
+# bucket:
+#   native   - pure system/FS/process/network op; kernel sees it; no pixels; we win
+#   headless - GUI task with a CLI/headless/API equivalent; achievable, no pixels
+#   blind    - genuinely perceptual/graphical; eBPF can't see pixels; out of reach today
+#
+# veronica_status: not-started | partial | done | out-of-scope
+# ebpf_visible: does the kernel emit a signal that confirms this happened?
+
+meta:
+  version: 0
+  cua_reference:
+    osworld_tasks: 369
+    osworld_human_success: 0.7236
+    osworld_sota_note: "SOTA CUAs now exceed human success (mid-80s% on some 2026 trackers); efficiency, not capability, is the differentiator"
+    efficiency_baseline:
+      excess_steps_multiplier: "1.4x-2.7x more steps than necessary"
+      latency_in_llm_calls: "75%-94% of total task latency"
+      screenshots_per_task: "one per step (many redundant)"
+  veronica_target:
+    screenshots_per_task: 0        # for native + headless buckets
+    llm_calls_per_task: 1          # event -> decision (goal-driven mode may use more)
+
+# ---------------------------------------------------------------------------
+# 🟢 NATIVE — kernel already sees it. Veronica's home turf.
+# ---------------------------------------------------------------------------
+tasks:
+  - id: native.file.organize
+    cua_task: "Move/rename/organize files in a file manager"
+    bucket: native
+    ebpf_visible: true            # openat / rename syscalls
+    veronica_approach: "exec mv/rename; file_open events confirm"
+    veronica_status: partial
+
+  - id: native.pkg.install
+    cua_task: "Install a software package via GUI/terminal"
+    bucket: native
+    ebpf_visible: true            # process_exec of apt/uv/pip
+    veronica_approach: "exec apt/uv install; process_exec + process_exit confirm"
+    veronica_status: partial
+
+  - id: native.pkg.typosquat_guard
+    cua_task: "(cua wouldn't) install a package"
+    bucket: native
+    ebpf_visible: true
+    veronica_approach: "detect typosquat on pip install, kill install"
+    veronica_status: done          # examples.md #10
+
+  - id: native.config.edit_validate_reload
+    cua_task: "Edit a config file in an editor, save, restart the service"
+    bucket: native
+    ebpf_visible: true            # file_open write to /etc, process_exec
+    veronica_approach: "on write to nginx.conf: nginx -t, systemctl reload"
+    veronica_status: done          # examples.md #9
+
+  - id: native.perm.revert_dangerous
+    cua_task: "Change file permissions"
+    bucket: native
+    ebpf_visible: true
+    veronica_approach: "detect chmod 777 on sensitive file, enforce revert to 640"
+    veronica_status: done          # examples.md #4
+
+  - id: native.net.block_ip
+    cua_task: "Change firewall / network settings"
+    bucket: native
+    ebpf_visible: true            # net_connect kprobe
+    veronica_approach: "enforce deny on IP (iptables), or XDP drop"
+    veronica_status: partial
+
+  - id: native.net.port_redirect
+    cua_task: "Set up a port forward / redirect"
+    bucket: native
+    ebpf_visible: true
+    veronica_approach: "transform dport=80 -> dport=8080 via iptables NAT"
+    veronica_status: partial
+
+  - id: native.proc.limit_runaway
+    cua_task: "Open a system monitor and limit/kill a runaway process"
+    bucket: native
+    ebpf_visible: true            # perf events, sched tracepoints
+    veronica_approach: "measure cpu/io, schedule renice or cgroup cap"
+    veronica_status: partial
+
+  - id: native.proc.crash_recovery
+    cua_task: "Restart a crashed service"
+    bucket: native
+    ebpf_visible: true            # process_exit with nonzero code
+    veronica_approach: "on nginx exit!=0: check logs, validate, restart"
+    veronica_status: done          # examples.md #3
+
+  - id: native.scaffold.from_dir
+    cua_task: "Create a new project folder and set up boilerplate"
+    bucket: native
+    ebpf_visible: true            # process_exec of mkdir
+    veronica_approach: "infer stack from dir name, uv init + scaffold"
+    veronica_status: done          # examples.md #1
+
+  - id: native.scaffold.from_spec
+    cua_task: "Read a spec doc and create the described project"
+    bucket: native
+    ebpf_visible: true            # file_open write to *_project.md
+    veronica_approach: "read spec, scaffold files in same dir"
+    veronica_status: done          # examples.md #11
+
+  - id: native.download.auto_extract
+    cua_task: "Download a file and extract the archive"
+    bucket: native
+    ebpf_visible: true            # process_exec of curl/wget
+    veronica_approach: "detect archive, extract, clean up"
+    veronica_status: partial       # examples.md #5 (executor timeout in VM)
+
+  - id: native.repo.auto_setup
+    cua_task: "Clone a repo and install its dependencies"
+    bucket: native
+    ebpf_visible: true            # process_exec of git
+    veronica_approach: "detect manifest, uv sync / npm i / go mod download"
+    veronica_status: partial       # examples.md #2
+
+  - id: native.security.hardening
+    cua_task: "Generate an SSH key"
+    bucket: native
+    ebpf_visible: true
+    veronica_approach: "replace RSA with ed25519, fix perms"
+    veronica_status: done          # examples.md #7
+
+# ---------------------------------------------------------------------------
+# 🟡 HEADLESS — GUI task with a CLI/headless/API equivalent. Needs goal-driven
+# mode + tool adapters, but still zero screenshots.
+# ---------------------------------------------------------------------------
+  - id: headless.calc.find_replace
+    cua_task: "Find-and-replace a value across a spreadsheet in LibreOffice Calc"
+    bucket: headless
+    ebpf_visible: false           # in-app edit, no distinct syscall signal
+    veronica_approach: "soffice --headless macro, or parse/rewrite xlsx directly"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:libreoffice-headless]
+
+  - id: headless.calc.formula_fill
+    cua_task: "Add a column with a computed formula and sum it"
+    bucket: headless
+    ebpf_visible: false
+    veronica_approach: "python openpyxl / soffice macro"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:xlsx]
+
+  - id: headless.writer.convert_export
+    cua_task: "Export a Writer document to PDF / reformat it"
+    bucket: headless
+    ebpf_visible: false
+    veronica_approach: "soffice --headless --convert-to pdf"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:libreoffice-headless]
+
+  - id: headless.image.crop_convert
+    cua_task: "Crop / resize / convert an image in GIMP"
+    bucket: headless
+    ebpf_visible: false           # GIMP internal ops
+    veronica_approach: "ImageMagick convert via exec"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:imagemagick]
+
+  - id: headless.image.batch_process
+    cua_task: "Apply the same edit to many images"
+    bucket: headless
+    ebpf_visible: false
+    veronica_approach: "ImageMagick mogrify loop"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:imagemagick]
+
+  - id: headless.ide.git_ops
+    cua_task: "Stage, commit, push via the VS Code UI"
+    bucket: headless
+    ebpf_visible: true            # process_exec of git under the hood
+    veronica_approach: "exec git directly; process_exit for result"
+    veronica_status: not-started
+    needs: [goal-driven-mode]
+
+  - id: headless.ide.run_tests
+    cua_task: "Run the test suite and report pass/fail"
+    bucket: headless
+    ebpf_visible: true            # process_exec + process_exit code
+    veronica_approach: "exec test runner; exit code is the oracle"
+    veronica_status: not-started
+    needs: [goal-driven-mode]
+
+  - id: headless.web.form_fill
+    cua_task: "Fill and submit a web form in Chrome"
+    bucket: headless
+    ebpf_visible: partial         # net_connect visible; DOM not
+    veronica_approach: "hit the API/endpoint directly, or Playwright headless"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:playwright]
+
+  - id: headless.web.scrape_data
+    cua_task: "Navigate a site and extract structured data"
+    bucket: headless
+    ebpf_visible: partial
+    veronica_approach: "curl/HTTP + parse, or Playwright headless for JS sites"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:playwright]
+
+  - id: headless.db.query
+    cua_task: "Open a DB GUI and run a query, export results"
+    bucket: headless
+    ebpf_visible: true            # net_connect to db port
+    veronica_approach: "exec sqlite/psql, redirect to file"
+    veronica_status: not-started
+    needs: [goal-driven-mode]
+
+  - id: headless.media.transcode
+    cua_task: "Convert a video/audio file in a media app"
+    bucket: headless
+    ebpf_visible: false
+    veronica_approach: "ffmpeg via exec"
+    veronica_status: not-started
+    needs: [goal-driven-mode, adapter:ffmpeg]
+
+  - id: headless.email.send
+    cua_task: "Compose and send an email in Thunderbird"
+    bucket: headless
+    ebpf_visible: true            # net_connect to smtp
+    veronica_approach: "SMTP client / API call"
+    veronica_status: not-started
+    needs: [goal-driven-mode]
+
+# ---------------------------------------------------------------------------
+# 🔴 BLIND — genuinely perceptual. eBPF sees no pixels. Out of reach today.
+# These define the honest boundary; cua's screenshot approach is irreplaceable
+# here without adding a perception fallback to Veronica.
+# ---------------------------------------------------------------------------
+  - id: blind.layout.judge
+    cua_task: "Pick which slide layout looks better / arrange elements visually"
+    bucket: blind
+    ebpf_visible: false
+    veronica_approach: "none — requires visual judgment"
+    veronica_status: out-of-scope
+
+  - id: blind.ocr.read_image_text
+    cua_task: "Read text rendered inside an image / scanned doc"
+    bucket: blind
+    ebpf_visible: false
+    veronica_approach: "OCR/vision only; kernel sees bytes, not glyphs"
+    veronica_status: out-of-scope
+
+  - id: blind.canvas.drag_nodes
+    cua_task: "Drag/arrange nodes on a canvas or whiteboard (Figma-like)"
+    bucket: blind
+    ebpf_visible: false
+    veronica_approach: "none — pixel-only interaction, no API"
+    veronica_status: out-of-scope
+
+  - id: blind.closed_gui.operate
+    cua_task: "Operate a closed proprietary GUI with no CLI/API"
+    bucket: blind
+    ebpf_visible: false
+    veronica_approach: "screenshot fallback (hybrid) or out-of-scope"
+    veronica_status: out-of-scope
+
+  - id: blind.game.play
+    cua_task: "Play a game / react to real-time rendered visuals"
+    bucket: blind
+    ebpf_visible: false
+    veronica_approach: "none — real-time pixel perception"
+    veronica_status: out-of-scope
+</content>
